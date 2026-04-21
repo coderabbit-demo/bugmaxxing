@@ -1,0 +1,162 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: "en-US"
+early_access: false
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+
+  high_level_summary: true
+  high_level_summary_instructions: >
+    Write a concise PR summary for a data-science / PySpark repository.
+    Call out modeling assumptions, schema or contract changes, join or aggregation logic changes,
+    metric-definition changes, test impact, performance risks, and any production or backfill risk.
+
+  review_status: true
+  review_details: false
+  commit_status: true
+  collapse_walkthrough: true
+  changed_files_summary: true
+  sequence_diagrams: false
+  estimate_code_review_effort: true
+  related_issues: true
+  related_prs: true
+  suggested_reviewers: true
+
+  poem: false
+  in_progress_fortune: false
+  enable_prompt_for_ai_agents: true
+
+  # Keep reviews focused on source, SQL, config, CI, and docs.
+  # Remove the ipynb exclusion if you want notebook reviews.
+  path_filters:
+    - "**/*.py"
+    - "**/*.sql"
+    - "**/*.yaml"
+    - "**/*.yml"
+    - "**/*.md"
+    - "!**/*.ipynb"
+    - "!**/dist/**"
+    - "!**/build/**"
+    - "!**/.venv/**"
+    - "!**/site-packages/**"
+    - "!**/coverage/**"
+
+  path_instructions:
+    - path: "**/*.py"
+      instructions: |
+        Review this as production PySpark / data-science code.
+
+        Prioritize:
+        - correctness of joins, filters, aggregations, window logic, and null handling
+        - schema evolution / column contract changes and backward compatibility
+        - deterministic behavior and reproducibility
+        - numerical stability, divide-by-zero, empty-input, and sparse-data edge cases
+        - performance risks in Spark such as unnecessary shuffles, repeated actions, collect/toPandas on large data, skew risks, repartition/coalesce misuse, and avoidable Python UDFs
+        - clarity of business assumptions, metric definitions, parameter names, and config-driven behavior
+
+        Prefer specific, actionable suggestions.
+        Do not suggest stylistic churn unless it clearly improves correctness, maintainability, or performance.
+
+    - path: "tests/**/*.py"
+      instructions: |
+        Prefer pytest-style tests.
+
+        Push for deterministic tests with tiny synthetic datasets or fixtures.
+        Ask for coverage of:
+        - nulls / missing columns
+        - duplicate keys and many-to-many joins
+        - empty inputs
+        - threshold / boundary conditions
+        - schema mismatch / invalid config handling
+        - exact metric correctness for representative edge cases
+
+        Avoid broad except Exception patterns in tests.
+
+    - path: "**/*.sql"
+      instructions: |
+        Review SQL for join-cardinality mistakes, silent duplication, null semantics, filter pushdown opportunities, partition pruning, and metric-definition drift.
+        Flag ambiguous SELECT * usage in production transformations.
+
+    - path: ".github/workflows/**/*.yml"
+      instructions: |
+        Review CI changes for dependency reproducibility, caching correctness, test selection, and whether changed modules plus likely downstream affected modules are exercised.
+
+    - path: "**/*.md"
+      instructions: |
+        For docs tied to modeling or measurement, check that assumptions, formulas, caveats, rollout notes, and future-work notes stay consistent with the code changes.
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 8
+    drafts: false
+
+    # Default branch is always included; these add more targets.
+    base_branches:
+      - "develop"
+      - "release/.*"
+      - "hotfix/.*"
+
+    ignore_title_keywords:
+      - "WIP"
+      - "[skip review]"
+      - "DO NOT REVIEW"
+
+    labels:
+      - "!do-not-review"
+      - "!skip-coderabbit"
+
+    ignore_usernames:
+      - "dependabot[bot]"
+      - "renovate[bot]"
+
+  finishing_touches:
+    docstrings:
+      enabled: true
+    unit_tests:
+      enabled: true
+
+chat:
+  auto_reply: true
+  art: false
+
+knowledge_base:
+  web_search:
+    enabled: true
+
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "**/CLAUDE.md"
+      - "**/AGENT.md"
+      - "**/AGENTS.md"
+      - "**/.cursorrules"
+      - "**/.cursor/rules/**"
+      - ".github/copilot-instructions.md"
+      - ".github/instructions/.instructions.md"
+
+  learnings:
+    scope: "local"
+
+  pull_requests:
+    scope: "local"
+
+code_generation:
+  docstrings:
+    language: "en-US"
+    path_instructions:
+      - path: "**/*.py"
+        instructions: |
+          Generate concise docstrings for business-critical functions and public helpers.
+          Explain purpose, parameters, return values, assumptions, important edge cases, and metric definitions when relevant.
+          Keep docstrings practical and avoid restating obvious implementation details.
+
+  unit_tests:
+    path_instructions:
+      - path: "**/*.py"
+        instructions: |
+          Generate pytest tests using tiny deterministic datasets.
+          Prioritize edge cases around joins, nulls, empty inputs, boundary conditions, schema drift, and metric correctness.
+          Prefer exact expected outputs or invariant-property checks over snapshot-like assertions.
