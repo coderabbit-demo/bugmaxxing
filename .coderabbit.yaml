@@ -1,0 +1,34 @@
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  path_instructions:
+    - path: "api/src/auth/**"
+      instructions: |
+        Security-critical auth code. Review with maximum scrutiny for these patterns:
+
+        1. HOST HEADER INJECTION: Flag any use of req.get('host') or req.hostname to
+           construct callback URLs or origin strings. The Host header is attacker-controlled.
+           Only env['PUBLIC_URL'] should be used as the base for OAuth callback URLs.
+           Using req.hostname to build originUrl in isLoginRedirectAllowed allows an attacker
+           to pass any redirect by setting Host: attacker.com.
+
+        2. URL PORT STRIPPING: new URL(x).hostname strips the port. Building comparison
+           URLs as `${protocol}//${hostname}` (no port) means https://trusted.com:8080/evil
+           passes the origin check when originUrl is https://trusted.com. Use .host (not
+           .hostname) to include port in comparisons.
+
+        3. JWT POISONING: callbackUrl stored in JWT is derived from req.get('host') at
+           request time. The JWT signature proves the server signed it, but the value was
+           set from an untrusted header. Verify callbackUrl against PUBLIC_URL before use.
+
+        4. STATIC REDIRECT_URIS: Removing redirect_uris from the OAuth client constructor
+           removes local validation before calling the OAuth provider. Defense-in-depth
+           that should be preserved even when supporting dynamic callback URLs.
+
+        5. CROSS-DRIVER AUDIT: Check if openid.ts and saml.ts have the same req.get('host')
+           / req.hostname patterns. Also check other call sites passing request-derived
+           origins to isLoginRedirectAllowed or generateCallbackUrl.
+
+tools:
+  semgrep:
+    enabled: true
