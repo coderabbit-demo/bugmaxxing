@@ -4,11 +4,33 @@
 language: "en-GB"
 early_access: true
 reviews:
+  profile: "assertive"
   request_changes_workflow: true
   high_level_summary: true
   poem: false
   review_status: true
   collapse_walkthrough: false
+  finishing_touches:
+    docstrings:
+      enabled: false
+  tools:
+    biome:
+      enabled: true
+    eslint:
+      enabled: true
+    github-checks:
+      enabled: true
+      timeout_ms: 90000
+    languagetool:
+      enabled: false
+    markdownlint:
+      enabled: true
+    shellcheck:
+      enabled: true
+    hadolint:
+      enabled: true
+    actionlint:
+      enabled: true
   auto_review:
     enabled: true
     ignore_title_keywords:
@@ -23,7 +45,16 @@ reviews:
   path_instructions:
     - path: "*"
       instructions:
-        "All character sets need to be in UTF-8.\n
+        "Flag any security vulnerabilities including injection attacks, XSS, CSRF, path traversal, and auth bypass.\n
+        Flag null/undefined dereferences and missing null checks at boundaries.\n
+        Flag missing error handling, swallowed exceptions, and unhandled promise rejections.\n
+        Flag race conditions, inconsistent state mutations, and missing atomicity.\n
+        Flag incorrect use of async/await (missing await, floating promises).\n
+        Flag logic errors: off-by-one, wrong operator, inverted conditions, unreachable code.\n
+        Flag resource leaks: unclosed handles, missing cleanup in finally/defer.\n
+        Flag type mismatches and implicit coercions that can cause runtime failures.\n
+        Flag inconsistent API surface: mismatched parameter names between callers and implementations.\n
+        All character sets need to be in UTF-8.\n
         Lines need to end with LF (line feed).\n
         Spaces need to be utilized for indentation instead of tabs.\n
         A newline must be inserted at the end of the file.\n
@@ -163,6 +194,10 @@ reviews:
         Avoid alignment of properties in JSON.\n
         Space needs to be introduced after colon and comma in JSON.\n
         Do not introduce space before colon or comma in JSON."
+
+    - path: "api/src/auth/**"
+      instructions:
+        "Find bugs for authorization coding standards.\n"
 
 chat:
   auto_reply: true
