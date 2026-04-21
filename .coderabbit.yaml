@@ -1,33 +1,77 @@
+tone_instructions: "Act as an extremely pedantic senior engineer. Report all issue types: Critical, Major, Minor, and Nits. Flag security, performance, maintainability, code style, typos, readability, and modularity concerns."
+
 reviews:
   profile: assertive
   request_changes_workflow: true
+  high_level_summary: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: true
+  slop_detection:
+    enabled: false
   path_instructions:
     - path: "api/src/auth/**"
       instructions: |
-        Security-critical auth code. Review with maximum scrutiny for these patterns:
+        Security-critical OAuth/OpenID auth code. Apply maximum scrutiny:
 
-        1. HOST HEADER INJECTION: Flag any use of req.get('host') or req.hostname to
-           construct callback URLs or origin strings. The Host header is attacker-controlled.
-           Only env['PUBLIC_URL'] should be used as the base for OAuth callback URLs.
-           Using req.hostname to build originUrl in isLoginRedirectAllowed allows an attacker
-           to pass any redirect by setting Host: attacker.com.
+        1. HOST HEADER INJECTION: Flag req.get('host') or req.hostname used to construct
+           callback URLs or originUrl. Host header is attacker-controlled; only env['PUBLIC_URL']
+           is trusted. Using req.hostname in isLoginRedirectAllowed lets attackers bypass
+           the redirect allow-list by spoofing the Host header.
 
-        2. URL PORT STRIPPING: new URL(x).hostname strips the port. Building comparison
-           URLs as `${protocol}//${hostname}` (no port) means https://trusted.com:8080/evil
-           passes the origin check when originUrl is https://trusted.com. Use .host (not
-           .hostname) to include port in comparisons.
+        2. URL PORT STRIPPING: new URL(x).hostname drops the port. Comparing
+           `${protocol}//${hostname}` lets https://trusted.com:8080/evil pass when
+           originUrl is https://trusted.com. Use .host (includes port) not .hostname.
 
-        3. JWT POISONING: callbackUrl stored in JWT is derived from req.get('host') at
-           request time. The JWT signature proves the server signed it, but the value was
-           set from an untrusted header. Verify callbackUrl against PUBLIC_URL before use.
+        3. JWT POISONING: callbackUrl in JWT payload derives from req.get('host') at request
+           time. JWT signature proves server signed it, not that the URL is safe.
+           Verify callbackUrl against PUBLIC_URL before use in the OAuth callback handler.
 
-        4. STATIC REDIRECT_URIS: Removing redirect_uris from the OAuth client constructor
-           removes local validation before calling the OAuth provider. Defense-in-depth
-           that should be preserved even when supporting dynamic callback URLs.
+        4. STATIC REDIRECT_URIS REMOVED: Removing redirect_uris from the OAuth client
+           constructor eliminates local validation before the network call to the provider.
+           This defense-in-depth should be preserved alongside dynamic callback URL support.
 
-        5. CROSS-DRIVER AUDIT: Check if openid.ts and saml.ts have the same req.get('host')
-           / req.hostname patterns. Also check other call sites passing request-derived
-           origins to isLoginRedirectAllowed or generateCallbackUrl.
+        5. COOKIE SECURITY: OAuth state cookies should include secure: true to prevent
+           transmission over HTTP. Check all res.cookie() calls for missing secure flag.
+
+        6. URL.canParse AVAILABILITY: URL.canParse() requires Node.js >=18.17 / >=19.9.
+           Verify the runtime version guarantee before relying on this API.
+
+        7. CROSS-DRIVER AUDIT: Check openid.ts and saml.ts for the same req.get('host')
+           / req.hostname patterns. Verify api/src/utils/is-login-redirect-allowed.ts
+           (the old utility) is fully removed and not imported elsewhere.
+
+    - path: "**"
+      instructions: |
+        Review as an extremely pedantic senior engineer. Flag ALL of the following:
+
+        Security: injection risks, improper input validation, unsafe deserialization,
+        insecure defaults, hardcoded secrets, missing authorization checks, unvalidated
+        redirects, prototype pollution.
+
+        Performance: O(n²) or worse algorithms where O(n) is achievable, unnecessary
+        allocations inside loops, synchronous I/O in async contexts, missing memoization
+        for expensive pure functions, N+1 query patterns.
+
+        Maintainability: functions >20 lines doing more than one thing, deep nesting
+        (>3 levels), magic numbers/strings without named constants, dead code, overly
+        broad catch blocks that swallow errors silently.
+
+        Readability & Modularity: suggest better variable/function names if ambiguous,
+        flag opportunities to extract repeated logic into helpers, note low cohesion
+        or high coupling between modules.
+
+        Code style: inconsistent naming conventions, missing or incorrect TypeScript
+        types (any/unknown used without narrowing), implicit type coercions.
+
+        Typos: flag all spelling errors in identifiers, comments, and string literals.
+
+        Best practices: missing null/undefined guards at trust boundaries, promises
+        not awaited or error-handled, missing cleanup in finally blocks.
+
+chat:
+  auto_reply: true
 
 tools:
   semgrep:
