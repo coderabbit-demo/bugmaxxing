@@ -1,0 +1,43 @@
+# CodeRabbit configuration for Directus monorepo
+# See https://docs.coderabbit.ai/configure/review for full reference
+
+language: "zh-CN"
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+
+  path_filters:
+    - "!pnpm-lock.yaml"
+    - "!**/dist/**"
+    - "!**/*.min.js"
+    - "!**/coverage/**"
+
+  path_instructions:
+    - path: "api/**"
+      instructions: |
+        Focus on security issues in authentication, authorization, and data access.
+        Check for SQL injection, improper input validation, and privilege escalation.
+    - path: "app/**"
+      instructions: |
+        Review Vue 3 component patterns, composable usage, and accessibility concerns.
+    - path: "packages/**"
+      instructions: |
+        Verify public API compatibility and type safety.
+    - path: "tests/**"
+      instructions: |
+        Ensure test coverage is meaningful. Flag tests that only assert trivial behavior.
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "main"
+      - "lab/**"
+
+chat:
+  auto_reply: true
