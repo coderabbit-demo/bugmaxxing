@@ -1,0 +1,44 @@
+language: en-US
+
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  high_level_summary: true
+  poem: false
+  review_status: true
+  auto_review:
+    enabled: true
+    drafts: false
+  path_instructions:
+    - path: "api/src/auth/**"
+      instructions: |
+        Security-critical OAuth/OpenID/SAML code. Review with maximum rigor.
+        - Redirect validation: isLoginRedirectAllowed must still allow redirects to PUBLIC_URL
+          even when PUBLIC_URL differs from the request origin. An early-return keyed solely on
+          origin match regresses multi-domain SSO. Trace all code paths to confirm the
+          AUTH_<provider>_REDIRECT_ALLOW_LIST and PUBLIC_URL checks are both reachable.
+        - Callback URL consistency: verify the same origin source is used in generateCallbackUrl
+          and in the isLoginRedirectAllowed call within the same request. req.get('host')
+          includes the port; req.hostname does not. Mixing them breaks token exchange.
+        - OAuth client registration: redirect_uris must be registered at client construction.
+          Removing them causes failures with strict OAuth providers.
+        - Check whether api/src/utils/is-login-redirect-allowed.ts is now dead code after
+          the import path was moved to api/src/auth/utils/. Flag if the old file is unreferenced.
+        - X-Forwarded-Host: when constructing URLs from request headers, confirm the app is
+          behind a trusted proxy before trusting forwarded host values.
+    - path: "api/src/auth/utils/is-login-redirect-allowed.ts"
+      instructions: |
+        Audit the allow-list logic order carefully:
+        1. Does the new origin-match check short-circuit before the PUBLIC_URL check runs?
+        2. Is AUTH_<provider>_REDIRECT_ALLOW_LIST still reachable in all code paths?
+        3. Are ports handled consistently (https://host:443 vs https://host)?
+    - path: "**/*.test.ts"
+      instructions: |
+        Verify test coverage includes: redirect to PUBLIC_URL when request origin ≠ PUBLIC_URL,
+        redirect to an allow-listed URL when request origin ≠ PUBLIC_URL, and port-in-hostname edge cases.
+
+tools:
+  semgrep:
+    enabled: true
+  biome:
+    enabled: true
