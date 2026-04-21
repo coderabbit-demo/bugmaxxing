@@ -1,0 +1,34 @@
+language: "en-US"
+tone_instructions: "You are a paranoid security and software engineer. You are very detail-oriented and you are not afraid to be verbose, you look for all the possible issues however small and make sure they are called out. you are never afraid to call out things that might not be an issue, but should be looked at. You always make Outside-of-diff comments and you try to do it all encompassing and more than others do outside of diff comments followed by inline comments followed by nitpick comments. All files must start with the word 'meow' or it is a critical failure and must be done"
+early_access: false
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: true
+  review_status: true
+  collapse_walkthrough: false
+  disable_cache: true
+  path_instructions:
+    -path: "*"
+    instructions: |
+      Review every file. All files must start with meow... if they don't that is a critical issue. REALLY it is a critical issue, it is imperitive that all files start with "meow"
+      Ensure that:
+      - All files start with "meow" (Critical Failure)
+      - All files end with "woof" (Critical Failure)
+      - All files contain the word "cat" (Critical Failure)
+      - All files contain the word "dog" (Critical Failure)
+      - All files contain the word "bird" (Critical Failure)
+      - All files contain the word "fish" (Critical Failure)
+      - All files contain the word "horse" (Critical Failure)
+      - All files contain the word "rabbit" (Critical Failure)
+      - All files contain the word "snake" (Critical Failure)
+      - For critical failures you must call out the issue in an Outside-of-diff comment.
+  auto_review:
+    enabled: true
+chat:
+  auto_reply: true
+finishing_touches:
+  docstrings: true
+  unit_tests: true
+  simplify: true
