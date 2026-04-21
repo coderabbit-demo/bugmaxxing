@@ -167,41 +167,115 @@ reviews:
 
     - path: "api/src/auth/drivers/oauth2.test.ts"
       instructions: >
-        Review test coverage gaps. Check whether tests exist for:
-        - hostname vs host mismatch (port stripping)
-        - Host header injection in callback URL generation
-        - undefined callbackUrl parameter behavior
-        - the redirectUri vs callbackUrl field naming mismatch
-        - non-standard port deployments
-        - mocking req.hostname and req.get('host') with different values
+        Review test coverage gaps and test quality issues:
+
+        1. TYPO IN VARIABLE NAME: `codeChallengelengeSpy` has a double "lenge" — should
+           be `codeChallengeSpy`. This typo is used consistently so tests pass, but it's
+           a code quality issue that suggests rushed/unreviewed code.
+
+        2. MISSING TEST FOR redirectUri vs callbackUrl MISMATCH: The tests pass
+           `callbackUrl` in the payload but the production code reads `payload['redirectUri']`.
+           No test verifies that oauthCallback receives the correct redirect URI value.
+           The existing PKCE tests don't assert on the first argument to oauthCallback
+           (the redirect URL), only on the second and third arguments. This means the
+           critical bug where redirectUri is always undefined is not caught by tests.
+
+        3. NO ROUTER-LEVEL TESTS for the hostname vs host mismatch: Tests only cover
+           the driver class methods, not the Express router handlers where the
+           `req.hostname` / `req.get('host')` inconsistency exists.
+
+        4. NO TEST for Host header injection via generateCallbackUrl.
+
+        5. The `generateAuthUrl` test "uses custom redirectUri when provided" (line ~303)
+           tests with a hardcoded URL but doesn't test what happens when callbackUrl is
+           undefined — which is the default case.
+
+        6. Test at line ~264 expects `redirect_uri: undefined` in the default case. This
+           means the test DOCUMENTS the bug (sending undefined redirect_uri to the OAuth
+           provider) rather than catching it. Flag this as a test that encodes broken behavior.
 
     - path: "api/src/auth/drivers/openid.test.ts"
       instructions: >
         Review test coverage gaps:
-        - Same concerns as oauth2.test.ts
-        - Error fallback path using PUBLIC_URL vs origin inconsistency
-        - callbackUrl field in JWT cookie round-trip
+        - Same typo `codeChallengelengeSpy` as oauth2.test.ts
+        - No tests for the error fallback path using PUBLIC_URL vs request origin
+        - No tests for the callbackUrl field round-trip through JWT cookie
+        - No tests for Host header injection
+        - Compare test coverage with oauth2.test.ts for consistency gaps
 
     - path: "api/src/auth/utils/is-login-redirect-allowed.test.ts"
       instructions: >
-        Review whether tests cover:
-        - Cross-origin redirects that ARE in REDIRECT_ALLOW_LIST but get rejected by
-          the new origin check (proving the allow-list is dead code)
-        - Redirects with non-standard ports
-        - javascript: protocol URLs
-        - The new parameter order
+        Review for INCORRECT TEST ASSERTIONS and missing coverage:
+
+        1. BUGGY TEST — "allows redirect when port differs": The test at line ~87 does
+           `isLoginRedirectAllowed('github', PUBLIC_URL, PUBLIC_URL + ':8080/admin')` and
+           expects `true`. But PUBLIC_URL is `https://directus.app` (no port). The redirect
+           `https://directus.app:8080/admin` has hostname `directus.app` (port stripped by
+           URL parser), so redirectUrl becomes `https://directus.app` which equals
+           `https://directus.app` (originUrl). So this may actually pass — but it passes
+           for the WRONG REASON (port is silently stripped), not because ports are properly
+           handled. The test name is misleading.
+
+        2. NO CROSS-ORIGIN ALLOW-LIST TEST: The old deleted test file tested cross-origin
+           redirects like `http://external.example.com` being allowed when in the allow-list.
+           The new tests ONLY test same-origin scenarios. There's no test proving that
+           cross-origin redirects in the REDIRECT_ALLOW_LIST are now broken by the new
+           origin check on line 34. This is a critical missing regression test.
+
+        3. OLD TEST CASES LOST IN MIGRATION: The deleted file had tests for:
+           - Multiple allowed URLs in a comma-separated list
+           - Port-specific URLs like `http://external.example.com:8055/test`
+           - Cross-origin PUBLIC_URL matching
+           These are all missing from the new test file.
+
+        4. NO TEST for `javascript:` protocol URLs — XSS vector.
+
+        5. The describe nesting is wrong: "origin matching" and "AUTH_..._REDIRECT_ALLOW_LIST"
+           are nested inside "empty or invalid redirect" describe block, which is semantically
+           incorrect.
 
     - path: "api/src/auth/utils/generate-callback-url.test.ts"
       instructions: >
-        Review whether tests cover:
-        - Malicious Host header values
-        - originUrl with ports
-        - JSDoc parameter order correctness
+        CRITICALLY INSUFFICIENT TEST COVERAGE. This file has only ONE test.
+        Missing tests for:
+        - originUrl with non-standard ports (e.g., `https://example.com:8443`)
+        - Malicious Host header values (e.g., `https://evil.com`)
+        - Malformed originUrl that would cause Url constructor to throw
+        - Special characters in providerName
+        - The JSDoc parameter order is reversed vs actual signature — no test validates this
 
     - path: "api/src/utils/is-login-redirect-allowed.test.ts"
       instructions: >
-        This file was DELETED. Verify ALL old test cases were migrated to the new
-        location. Check for edge cases lost in the move.
+        This file was DELETED. The old test suite had 7 test cases covering:
+        - No redirect (undefined)
+        - Invalid redirect type (number)
+        - Allowed URLs from REDIRECT_ALLOW_LIST (including cross-origin, multiple URLs,
+          port-specific URLs)
+        - Denied URLs (wrong protocol, wrong port, path mismatch)
+        - Relative paths
+        - Protocol-relative URLs (//example.com)
+        - Invalid PUBLIC_URL
+        The new test file is missing coverage for cross-origin allow-list scenarios,
+        port-specific URLs, and comma-separated allow lists. Flag each missing test case.
+
+    - path: "app/vite.config.js"
+      instructions: >
+        REGRESSION: `changeOrigin: true` was removed from the Vite dev proxy config.
+        This option sets the `Origin` header of the proxied request to match the target
+        URL, which is required for the API server to accept requests in development.
+        Without it, the dev proxy sends requests with the wrong Origin header, causing
+        CORS failures or origin-based security checks to fail during local development.
+        This removal appears unrelated to the OAuth multi-domain feature and may be
+        accidental. It will break local development for anyone using `npm run dev`.
+
+    - path: ".changeset/funny-owls-buy.md"
+      instructions: >
+        The changeset marks `@directus/app` as a `patch` change, but the only app
+        change is removing `changeOrigin: true` from vite.config.js. A dev-only proxy
+        config change arguably doesn't warrant a patch release of the app package.
+        Also, the changeset description "Added multi-domain OAuth/OpenID support" doesn't
+        mention the breaking change to isLoginRedirectAllowed's signature or the
+        REDIRECT_ALLOW_LIST regression.
 
     - path: "**/*.ts"
       instructions: >
