@@ -70,9 +70,25 @@ reviews:
         Best practices: missing null/undefined guards at trust boundaries, promises
         not awaited or error-handled, missing cleanup in finally blocks.
 
+        Logging: flag sensitive data in log output (tokens, passwords, PII, full URLs
+        with query params), log injection via unsanitized user input in log messages,
+        missing error logging on caught exceptions, inconsistent log levels (e.g. using
+        logger.info for errors), missing structured context (request ID, user ID) on
+        security-relevant events, and debug/verbose log statements left in production paths.
+
 chat:
   auto_reply: true
 
 tools:
   semgrep:
+    enabled: true
+  eslint:
+    enabled: true
+  trivy:
+    enabled: true
+  osvScanner:
+    enabled: true
+  trufflehog:
+    enabled: true
+  gitleaks:
     enabled: true
