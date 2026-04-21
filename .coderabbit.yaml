@@ -10,6 +10,11 @@ reviews:
     drafts: true
   slop_detection:
     enabled: false
+  finishing_touches:
+    docstrings:
+      enabled: true
+    unit_tests:
+      enabled: true
   path_instructions:
     - path: "api/src/auth/**"
       instructions: |
@@ -75,6 +80,8 @@ reviews:
         missing error logging on caught exceptions, inconsistent log levels (e.g. using
         logger.info for errors), missing structured context (request ID, user ID) on
         security-relevant events, and debug/verbose log statements left in production paths.
+        Flag any use of console.log/console.error/console.warn in production code — these
+        should use the structured logger instead.
 
 chat:
   auto_reply: true
@@ -91,4 +98,8 @@ tools:
   trufflehog:
     enabled: true
   gitleaks:
+    enabled: true
+  oxc:
+    enabled: true
+  languagetool:
     enabled: true
