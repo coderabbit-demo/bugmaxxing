@@ -10,63 +10,92 @@ reviews:
     enabled: true
     drafts: false
   path_instructions:
-    - path: "api/src/auth/utils/generate-callback-url.ts"
-      instructions: |
-        Review for Host header injection: verify the callback URL is constructed
-        from a trusted source (e.g. PUBLIC_URL env var) rather than directly from
-        request headers (Host, X-Forwarded-Host, X-Forwarded-Proto). Check whether
-        the server requires explicit trust-proxy configuration for this to be safe.
-        Verify there is allowlisting or validation of acceptable origins before use.
-
-    - path: "api/src/auth/utils/is-login-redirect-allowed.ts"
-      instructions: |
-        The function signature changed to add an `originUrl` parameter. Audit ALL
-        callers across the codebase (not just files in this PR) to confirm they pass
-        the correct arguments in the new parameter order. Check that `originUrl`
-        cannot be set from an untrusted request header. Verify the new validation
-        logic does not regress valid redirects that previously worked when PUBLIC_URL
-        differs from request origin. Test edge cases: protocol-relative URLs, double
-        slashes, Unicode homoglyphs.
-
     - path: "api/src/auth/drivers/oauth2.ts"
       instructions: |
-        The PR removes `redirect_uris` from the OAuth client configuration and
-        passes callback URL dynamically. Check: (1) whether the OAuth provider
-        library requires `redirect_uris` at init time — omitting it may break token
-        exchange with strict providers; (2) whether `callbackUrl` stored in the JWT
-        can be manipulated by an attacker to redirect tokens; (3) that the PKCE
-        code verifier flow is intact with the new dynamic callback URL; (4) the
-        final redirect in the callback handler re-validates the redirect URL.
+        Look for a key name mismatch in the JWT token payload: the login route signs
+        a token with a field named `callbackUrl`, but the callback route reads
+        `payload['redirectUri']`. These names do not match — one will always be
+        undefined. Confirm whether this breaks the OAuth2 token exchange entirely.
+
+        Also check: `redirect_uris` was removed from the openid-client `Client`
+        constructor. Some OAuth2 providers reject token requests when the client was
+        not initialized with a matching `redirect_uris` list. Verify this is safe.
+
+        Verify the `roleMapping` null-check reorder: the `instanceof Array` guard
+        was moved before the `this.roleMap = roleMapping` assignment — confirm the
+        new order is correct and doesn't silently swallow valid role maps.
 
     - path: "api/src/auth/drivers/openid.ts"
       instructions: |
-        `generateAuthUrl` is now async. Verify every caller properly awaits it.
-        The `redirect_uris` removal violates OpenID Connect Core spec Section 3.1.2.1
-        which requires redirect_uri validation against pre-registered URIs — flag this.
-        Check whether issuer discovery could be exploited to bypass redirect_uri
-        enforcement. Verify `callbackUrl` in the JWT payload is validated on receipt.
+        The login route calls `generateCallbackUrl` with `req.get('host')` (includes
+        port), but `isLoginRedirectAllowed` is called with `req.hostname` (strips
+        port). These two differ on non-standard ports, creating a mismatch between
+        the registered callback URL and what redirect validation accepts. Flag this
+        inconsistency.
+
+        Also: `redirect_uris` was removed from the openid-client `Client`
+        constructor. OpenID Connect Core spec §3.1.2.1 requires the authorization
+        server to validate `redirect_uri` against pre-registered values. Removing
+        `redirect_uris` from the client config may bypass this check for some
+        providers.
+
+        Verify `callbackUrl` extracted from the JWT in the callback handler is
+        validated or sanitized before being passed to `client.callback()` — an
+        attacker who can forge or replay an old token could supply an arbitrary URL.
+
+    - path: "api/src/auth/utils/generate-callback-url.ts"
+      instructions: |
+        This function builds an OAuth callback URL from a caller-supplied `originUrl`
+        string. In both OAuth2 and OpenID routers, `originUrl` is constructed from
+        `req.get('host')`, which reads the raw `Host` HTTP header — a user-controlled
+        value. Without Express `trust proxy` configured, this enables Host header
+        injection: an attacker sets `Host: evil.com` and the OAuth provider is told
+        to redirect to `https://evil.com/auth/login/{provider}/callback`.
+
+        Check whether there is any validation that `originUrl` matches a trusted
+        domain (e.g. `PUBLIC_URL`) before building the callback URL.
+
+    - path: "api/src/auth/utils/is-login-redirect-allowed.ts"
+      instructions: |
+        The new security check `if (redirectUrl !== originUrl) return false` runs
+        BEFORE the `AUTH_{PROVIDER}_REDIRECT_ALLOW_LIST` check. This means any
+        redirect URL on a different origin than the request is rejected — even if it
+        is explicitly listed in the allowlist. The allowlist feature is effectively
+        dead code. Confirm whether this is intentional or a logic ordering bug.
+
+        Also: `originUrl` is derived from `req.hostname` in callers, which is
+        user-influenced via the `Host` header when `trust proxy` is not set. If an
+        attacker controls `originUrl`, they control which origins pass the check.
+
+        Compare with the OLD `isLoginRedirectAllowed` (in `api/src/utils/`) — what
+        validation existed there that is now missing?
 
     - path: "api/src/auth/drivers/saml.ts"
       instructions: |
-        Check that the SAML driver was updated to match any signature changes in
-        `isLoginRedirectAllowed`. Redirect validation must be consistent with the
-        OAuth2 and OpenID drivers.
+        The SAML driver updates the `isLoginRedirectAllowed` call signature to pass
+        `${req.protocol}://${req.hostname}` as `originUrl`, but it does NOT call
+        `generateCallbackUrl` or store a dynamic `callbackUrl` in the RelayState.
+        If multi-domain callback support was the goal of this PR, SAML is incomplete.
+        Flag the inconsistency with the OAuth2 and OpenID drivers.
 
     - path: "api/src/auth/**"
       instructions: |
-        Security audit: (1) Search for any remaining callers of the OLD
-        `isLoginRedirectAllowed` signature that were not updated in this PR;
-        (2) Verify that Express `trust proxy` is documented as a prerequisite for
-        the forwarded-host feature to work securely — without it, Host header
-        injection is trivial; (3) Flag any code paths where a user-controlled value
-        reaches URL construction without sanitization; (4) Check for missing `await`
-        on the newly-async `generateAuthUrl`.
+        Cross-cutting checks for this entire auth subsystem change:
+        1. Verify the OLD `isLoginRedirectAllowed` at `api/src/utils/is-login-redirect-allowed.ts`
+           is no longer imported anywhere — if any callers were missed they now call
+           a stale version with the wrong signature.
+        2. Check that no code path passes an unvalidated `req.get('host')` or
+           `req.headers.host` value into URL construction without first confirming
+           the server trusts proxy headers (`app.set('trust proxy', ...)`).
+        3. Look for any place a JWT `callbackUrl` claim is used without verifying it
+           belongs to a trusted domain — open redirect via token replay.
 
     - path: "app/vite.config.js"
       instructions: |
-        `changeOrigin: true` was removed from the proxy config. Explain the security
-        impact on Origin header handling and whether this breaks CORS or CSRF
-        protection in development or production proxy setups.
+        `changeOrigin: true` was removed from the dev proxy config. This means
+        the `Origin` header sent to the API in development now reflects the Vite
+        dev server origin rather than the API origin. Explain whether this affects
+        CORS preflight responses or CSRF token validation in the API.
 
 knowledge_base:
   learnings:
