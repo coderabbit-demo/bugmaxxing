@@ -1,0 +1,105 @@
+tone_instructions: "Act as an extremely pedantic senior engineer. Report all issue types: Critical, Major, Minor, and Nits. Flag security, performance, maintainability, code style, typos, readability, and modularity concerns."
+
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  high_level_summary: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: true
+  slop_detection:
+    enabled: false
+  finishing_touches:
+    docstrings:
+      enabled: true
+    unit_tests:
+      enabled: true
+  path_instructions:
+    - path: "api/src/auth/**"
+      instructions: |
+        Security-critical OAuth/OpenID auth code. Apply maximum scrutiny:
+
+        1. HOST HEADER INJECTION: Flag req.get('host') or req.hostname used to construct
+           callback URLs or originUrl. Host header is attacker-controlled; only env['PUBLIC_URL']
+           is trusted. Using req.hostname in isLoginRedirectAllowed lets attackers bypass
+           the redirect allow-list by spoofing the Host header.
+
+        2. URL PORT STRIPPING: new URL(x).hostname drops the port. Comparing
+           `${protocol}//${hostname}` lets https://trusted.com:8080/evil pass when
+           originUrl is https://trusted.com. Use .host (includes port) not .hostname.
+
+        3. JWT POISONING: callbackUrl in JWT payload derives from req.get('host') at request
+           time. JWT signature proves server signed it, not that the URL is safe.
+           Verify callbackUrl against PUBLIC_URL before use in the OAuth callback handler.
+
+        4. STATIC REDIRECT_URIS REMOVED: Removing redirect_uris from the OAuth client
+           constructor eliminates local validation before the network call to the provider.
+           This defense-in-depth should be preserved alongside dynamic callback URL support.
+
+        5. COOKIE SECURITY: OAuth state cookies should include secure: true to prevent
+           transmission over HTTP. Check all res.cookie() calls for missing secure flag.
+
+        6. URL.canParse AVAILABILITY: URL.canParse() requires Node.js >=18.17 / >=19.9.
+           Verify the runtime version guarantee before relying on this API.
+
+        7. CROSS-DRIVER AUDIT: Check openid.ts and saml.ts for the same req.get('host')
+           / req.hostname patterns. Verify api/src/utils/is-login-redirect-allowed.ts
+           (the old utility) is fully removed and not imported elsewhere.
+
+    - path: "**"
+      instructions: |
+        Review as an extremely pedantic senior engineer. Flag ALL of the following:
+
+        Security: injection risks, improper input validation, unsafe deserialization,
+        insecure defaults, hardcoded secrets, missing authorization checks, unvalidated
+        redirects, prototype pollution.
+
+        Performance: O(n²) or worse algorithms where O(n) is achievable, unnecessary
+        allocations inside loops, synchronous I/O in async contexts, missing memoization
+        for expensive pure functions, N+1 query patterns.
+
+        Maintainability: functions >20 lines doing more than one thing, deep nesting
+        (>3 levels), magic numbers/strings without named constants, dead code, overly
+        broad catch blocks that swallow errors silently.
+
+        Readability & Modularity: suggest better variable/function names if ambiguous,
+        flag opportunities to extract repeated logic into helpers, note low cohesion
+        or high coupling between modules.
+
+        Code style: inconsistent naming conventions, missing or incorrect TypeScript
+        types (any/unknown used without narrowing), implicit type coercions.
+
+        Typos: flag all spelling errors in identifiers, comments, and string literals.
+
+        Best practices: missing null/undefined guards at trust boundaries, promises
+        not awaited or error-handled, missing cleanup in finally blocks.
+
+        Logging: flag sensitive data in log output (tokens, passwords, PII, full URLs
+        with query params), log injection via unsanitized user input in log messages,
+        missing error logging on caught exceptions, inconsistent log levels (e.g. using
+        logger.info for errors), missing structured context (request ID, user ID) on
+        security-relevant events, and debug/verbose log statements left in production paths.
+        Flag any use of console.log/console.error/console.warn in production code — these
+        should use the structured logger instead.
+
+chat:
+  auto_reply: true
+
+tools:
+  semgrep:
+    enabled: true
+  eslint:
+    enabled: true
+  trivy:
+    enabled: true
+  osvScanner:
+    enabled: true
+  trufflehog:
+    enabled: true
+  gitleaks:
+    enabled: true
+  oxc:
+    enabled: true
+  languagetool:
+    enabled: true
