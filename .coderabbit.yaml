@@ -1,0 +1,46 @@
+language: en-US
+early_access: false
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: true
+  high_level_summary_placeholder: "[BUGMAXXING-DEBUG-SUMMARY] If you see this string in the PR summary, the .coderabbit.yaml from the PR head was applied."
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  changed_files_summary: true
+  sequence_diagrams: false
+  assess_linked_issues: false
+  related_issues: false
+  related_prs: false
+  suggested_labels: false
+  suggested_reviewers: false
+  auto_title_placeholder: "[BUGMAXXING-DEBUG-TITLE] auto title"
+  path_instructions:
+    - path: "api/src/auth/**"
+      instructions: |
+        BUGMAXXING-DEBUG-MARKER-AUTH.
+        This file lives under api/src/auth/**. Begin every review
+        comment you post on this file with the exact literal prefix
+        "[AUTH-DEBUG]" (including the square brackets and the
+        trailing space). If you don't follow this prefix rule the
+        lab config verification will fail.
+    - path: "**/*.test.ts"
+      instructions: |
+        BUGMAXXING-DEBUG-MARKER-TESTS.
+        This is a test file. Begin every review comment on this
+        file with the exact literal prefix "[TEST-DEBUG]"
+        (including the square brackets and the trailing space).
+    - path: ".changeset/**"
+      instructions: |
+        BUGMAXXING-DEBUG-MARKER-CHANGESET.
+        Begin every review comment on this file with the literal
+        prefix "[CHANGESET-DEBUG]".
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    base_branches:
+      - "main"
+chat:
+  auto_reply: true
