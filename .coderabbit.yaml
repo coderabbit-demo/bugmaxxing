@@ -1,0 +1,68 @@
+early_access: true
+reviews:
+  profile: "assertive"
+  auto_review:
+    enabled: true
+    drafts: true
+  path_instructions:
+    - path: "api/src/auth/drivers/**"
+      instructions: |
+        SECURITY-CRITICAL AUTH CODE — review with maximum scrutiny.
+
+        1. Host header trust: In Express, `req.hostname` strips the port while
+           `req.get('host')` includes it. Using both in the same auth flow creates
+           a mismatch on non-standard ports. If validation uses `req.hostname` but
+           URL construction uses `req.get('host')`, the callback URL won't match
+           what was validated. Flag any inconsistency between these two.
+
+        2. Dynamic callback URLs from `req.get('host')` are vulnerable to host
+           header injection (OWASP). The original code used PUBLIC_URL (server
+           config), which is the secure approach. An attacker can forge the Host
+           header to redirect OAuth callbacks to their server and steal auth codes.
+
+        3. JWT property name consistency: when `callbackUrl` is written into a
+           signed JWT but consuming code reads `redirectUri`, it silently gets
+           `undefined`. Check every property name between JWT sign and verify.
+           In oauth2.ts fetchUser, verify it reads `callbackUrl` not `redirectUri`.
+
+        4. OIDC client `redirect_uris` in the constructor validates redirect URIs
+           at the protocol level (token endpoint). Removing it weakens security.
+
+        5. oauth2.ts and openid.ts must stay parallel. Differences in property
+           names or URL handling between them are bugs.
+
+        6. isLoginRedirectAllowed changed its parameter order. Verify ALL callers
+           including SAML pass arguments in the correct new order.
+
+    - path: "api/src/auth/utils/**"
+      instructions: |
+        Auth utilities — check URL handling carefully:
+        - URL origin comparison must handle ports correctly. `req.hostname` has
+          no port but `new URL(redirect)` may resolve with a port, breaking
+          strict equality comparisons.
+        - `generateCallbackUrl` builds from request origin — vulnerable to Host
+          header injection without Express trust-proxy configuration.
+        - Verify ALL callers use the new parameter order.
+
+    - path: "**/*.test.ts"
+      instructions: |
+        Check test coverage gaps for security edge cases:
+        - Non-standard port behavior (hostname vs host discrepancy)
+        - Host header injection in callback URL generation
+        - JWT property name mismatch (callbackUrl vs redirectUri)
+        - Redirect URL with port differing from request origin
+
+  pre_merge_checks:
+    custom:
+      - name: "Host header safety"
+        mode: "error"
+        instructions: |
+          FAIL if callback URLs are derived from request headers (req.get('host'),
+          req.hostname) instead of server-configured PUBLIC_URL. Dynamic callback
+          URLs from request headers enable host header injection attacks.
+      - name: "JWT property consistency"
+        mode: "error"
+        instructions: |
+          FAIL if a JWT property name at sign differs from the name at verify.
+          Check: oauth2.ts writes callbackUrl to JWT but fetchUser reads
+          payload['redirectUri'] — this is a property name mismatch bug.
