@@ -1,0 +1,89 @@
+language: "en-US"
+early_access: true
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: true
+  high_level_summary: true
+  high_level_summary_instructions: |
+    Focus on security regressions in OAuth/OpenID SSO flows. Flag the redirect allow-list being unreachable, Host header trust, hostname vs host inconsistency, and callback URL field name mismatches between drivers.
+  review_details: true
+  commit_status: true
+  fail_commit_status: true
+  collapse_walkthrough: false
+  changed_files_summary: true
+  sequence_diagrams: true
+  assess_linked_issues: true
+  related_issues: true
+  related_prs: true
+  poem: false
+  disable_cache: true
+
+  path_instructions:
+    - path: "api/src/auth/**/*.ts"
+      instructions: |
+        Security-critical auth code. Review for:
+        - Open redirect / SSRF via untrusted Host header in generateCallbackUrl (uses req.get('host') without validation against PUBLIC_URL or allow-list)
+        - req.hostname (strips port) vs req.get('host') (includes port) mismatch between redirect validation and callback URL generation — security check validates different origin than actually used
+        - oauth2.ts reads payload['redirectUri'] in oauthCallback() but JWT stores field as 'callbackUrl' — redirectUri is always undefined, breaking token exchange
+        - openid.ts correctly uses payload['callbackUrl'] — inconsistency between the two drivers
+        - redirect_uris removed from OIDC Client constructor weakens token exchange validation
+        - isLoginRedirectAllowed origin check on line 34 rejects cross-origin redirects BEFORE REDIRECT_ALLOW_LIST is consulted — allow-list is dead code
+        - new URL(redirect).hostname strips port, breaking non-standard port deployments
+        - JSDoc parameter order reversed in generate-callback-url.ts (says Origin URL first, providerName second, but code is opposite)
+        - SAML driver doesn't use generateCallbackUrl — inconsistent multi-domain support
+        - No protocol whitelist (http/https) — javascript: URIs pass URL.canParse()
+        - Error fallback in openid.ts uses PUBLIC_URL but success path uses request origin — inconsistent behavior behind proxies
+        - Logging of raw auth_data/session JSON in error paths risks credential leakage
+    - path: "api/src/auth/**/*.test.ts"
+      instructions: |
+        Check test quality and coverage gaps:
+        - Variable typo: codeChallengelengeSpy (double "lenge") used throughout
+        - oauth2 test line ~264 asserts redirect_uri: undefined as expected — documents broken behavior instead of catching it
+        - No test verifies oauthCallback first argument (redirect URL) is correct — the redirectUri/callbackUrl mismatch is invisible
+        - No router-level tests for hostname vs host mismatch
+        - No tests for Host header injection via generateCallbackUrl
+        - No cross-origin allow-list test in new is-login-redirect-allowed.test.ts — old file tested this but new file doesn't
+        - Old test file deletion lost coverage: cross-origin via allow-list, port-specific URLs, comma-separated lists
+        - generate-callback-url.test.ts has only ONE test — no ports, no malicious hosts, no malformed URLs
+        - Incorrect describe nesting in is-login-redirect-allowed.test.ts
+        - Port test (line ~87) passes for wrong reason — port is silently stripped, not properly handled
+        - Mock isolation: tests share mocked env across cases without proper reset between cross-origin scenarios
+        - Missing negative tests for malformed callback/session data and token leakage in error paths
+    - path: "app/vite.config.js"
+      instructions: |
+        Removed changeOrigin: true from dev proxy. This breaks local development: without it, proxied requests carry wrong Origin header causing CORS failures and auth flow breakage. Appears unrelated to OAuth multi-domain feature — likely accidental. Also check proxy/cookie/websocket/CORS and dev-prod parity risks.
+    - path: ".changeset/funny-owls-buy.md"
+      instructions: |
+        Changeset says "Added multi-domain OAuth/OpenID support" but doesn't document: breaking signature change to isLoginRedirectAllowed, REDIRECT_ALLOW_LIST regression, or that this PR replicates directus/directus#26074 which was reverted. The @directus/app patch bump for a dev-only proxy change is questionable.
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: true
+    base_branches:
+      - "main"
+
+  tools:
+    eslint:
+      enabled: true
+    semgrep:
+      enabled: true
+    biome:
+      enabled: true
+    markdownlint:
+      enabled: true
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false
+  web_search:
+    enabled: true
+  learnings:
+    scope: "auto"
+  issues:
+    scope: "auto"
+  pull_requests:
+    scope: "auto"
