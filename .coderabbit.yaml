@@ -1,0 +1,110 @@
+language: en-US
+
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  high_level_summary: true
+  poem: false
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_instructions:
+    - path: "api/src/auth/drivers/oauth2.ts"
+      instructions: |
+        Look for a key name mismatch in the JWT token payload: the login route signs
+        a token with a field named `callbackUrl`, but the callback route reads
+        `payload['redirectUri']`. These names do not match — one will always be
+        undefined. Confirm whether this breaks the OAuth2 token exchange entirely.
+
+        Also check: `redirect_uris` was removed from the openid-client `Client`
+        constructor. Some OAuth2 providers reject token requests when the client was
+        not initialized with a matching `redirect_uris` list. Verify this is safe.
+
+        Verify the `roleMapping` null-check reorder: the `instanceof Array` guard
+        was moved before the `this.roleMap = roleMapping` assignment — confirm the
+        new order is correct and doesn't silently swallow valid role maps.
+
+    - path: "api/src/auth/drivers/openid.ts"
+      instructions: |
+        The login route calls `generateCallbackUrl` with `req.get('host')` (includes
+        port), but `isLoginRedirectAllowed` is called with `req.hostname` (strips
+        port). These two differ on non-standard ports, creating a mismatch between
+        the registered callback URL and what redirect validation accepts. Flag this
+        inconsistency.
+
+        Also: `redirect_uris` was removed from the openid-client `Client`
+        constructor. OpenID Connect Core spec §3.1.2.1 requires the authorization
+        server to validate `redirect_uri` against pre-registered values. Removing
+        `redirect_uris` from the client config may bypass this check for some
+        providers.
+
+        Verify `callbackUrl` extracted from the JWT in the callback handler is
+        validated or sanitized before being passed to `client.callback()` — an
+        attacker who can forge or replay an old token could supply an arbitrary URL.
+
+    - path: "api/src/auth/utils/generate-callback-url.ts"
+      instructions: |
+        This function builds an OAuth callback URL from a caller-supplied `originUrl`
+        string. In both OAuth2 and OpenID routers, `originUrl` is constructed from
+        `req.get('host')`, which reads the raw `Host` HTTP header — a user-controlled
+        value. Without Express `trust proxy` configured, this enables Host header
+        injection: an attacker sets `Host: evil.com` and the OAuth provider is told
+        to redirect to `https://evil.com/auth/login/{provider}/callback`.
+
+        Check whether there is any validation that `originUrl` matches a trusted
+        domain (e.g. `PUBLIC_URL`) before building the callback URL.
+
+    - path: "api/src/auth/utils/is-login-redirect-allowed.ts"
+      instructions: |
+        The new security check `if (redirectUrl !== originUrl) return false` runs
+        BEFORE the `AUTH_{PROVIDER}_REDIRECT_ALLOW_LIST` check. This means any
+        redirect URL on a different origin than the request is rejected — even if it
+        is explicitly listed in the allowlist. The allowlist feature is effectively
+        dead code. Confirm whether this is intentional or a logic ordering bug.
+
+        Also: `originUrl` is derived from `req.hostname` in callers, which is
+        user-influenced via the `Host` header when `trust proxy` is not set. If an
+        attacker controls `originUrl`, they control which origins pass the check.
+
+        Compare with the OLD `isLoginRedirectAllowed` (in `api/src/utils/`) — what
+        validation existed there that is now missing?
+
+    - path: "api/src/auth/drivers/saml.ts"
+      instructions: |
+        The SAML driver updates the `isLoginRedirectAllowed` call signature to pass
+        `${req.protocol}://${req.hostname}` as `originUrl`, but it does NOT call
+        `generateCallbackUrl` or store a dynamic `callbackUrl` in the RelayState.
+        If multi-domain callback support was the goal of this PR, SAML is incomplete.
+        Flag the inconsistency with the OAuth2 and OpenID drivers.
+
+    - path: "api/src/auth/**"
+      instructions: |
+        Cross-cutting checks for this entire auth subsystem change:
+        1. Verify the OLD `isLoginRedirectAllowed` at `api/src/utils/is-login-redirect-allowed.ts`
+           is no longer imported anywhere — if any callers were missed they now call
+           a stale version with the wrong signature.
+        2. Check that no code path passes an unvalidated `req.get('host')` or
+           `req.headers.host` value into URL construction without first confirming
+           the server trusts proxy headers (`app.set('trust proxy', ...)`).
+        3. Look for any place a JWT `callbackUrl` claim is used without verifying it
+           belongs to a trusted domain — open redirect via token replay.
+
+    - path: "app/vite.config.js"
+      instructions: |
+        `changeOrigin: true` was removed from the dev proxy config. This means
+        the `Origin` header sent to the API in development now reflects the Vite
+        dev server origin rather than the API origin. Explain whether this affects
+        CORS preflight responses or CSRF token validation in the API.
+
+knowledge_base:
+  learnings:
+    scope: local
+  issues:
+    scope: local
+  pull_requests:
+    scope: local
+
+tools:
+  semgrep:
+    enabled: true
