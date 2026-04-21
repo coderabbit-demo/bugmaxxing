@@ -1,0 +1,182 @@
+language: "en-US"
+reviews:
+  profile: "assertive"
+  high_level_summary: true
+  request_changes_workflow: true
+  auto_review:
+    enabled: true
+    drafts: false
+  path_instructions:
+    - path: "api/src/auth/**"
+      instructions: |
+        This is the most security-critical area of the codebase. Review with extreme care.
+
+        Specific bug patterns to flag (learned from PR #26074 regression):
+        - req.get('host') used to construct callback or redirect URLs — this header is
+          user-controlled and enables callback URL hijacking; use req.hostname instead.
+        - In isLoginRedirectAllowed, the allow-list check must precede the hard origin
+          comparison — if the origin guard returns false first, the allow-list is never
+          reached, silently breaking all legitimate cross-domain SSO redirects.
+        - Removal of redirect_uris from the OAuth/OIDC client registration shifts all
+          callback-URL enforcement to runtime and weakens server-side validation.
+        - Compare api/src/auth/utils/is-login-redirect-allowed.ts with the original
+          api/src/utils/is-login-redirect-allowed.ts — flag any behavioral divergence,
+          missing edge-case coverage, or callers still using the old path.
+        - callbackUrl extracted from the JWT in the callback handler must be validated
+          before being passed to the OIDC/OAuth library as a trusted redirect_uri.
+
+        General auth security checks:
+        - Flag any change that reads X-Forwarded-Proto or X-Forwarded-Host without first
+          confirming TRUST_PROXY is set — untrusted header spoofing leads to incorrect
+          callback URL construction.
+        - For OAuth2/OpenID drivers: confirm the redirect_uri sent to the provider matches
+          what the server will accept on callback — mismatches can silently break SSO flows.
+        - Check that PKCE, state, and nonce parameters are generated, stored, and validated
+          correctly across the full auth round-trip.
+        - Ensure provider config validation rejects empty or wildcard domains.
+
+    - path: "api/src/auth/utils/is-login-redirect-allowed.ts"
+      instructions: |
+        This file is the last line of defense against open redirect attacks. Any logic change
+        here requires a second pass.
+        - Verify the allow-list comparison is exact-origin, not prefix or substring match.
+        - Check that protocol is included in the comparison (http vs https must not be
+          interchangeable unless explicitly allowed).
+        - Ensure port numbers are handled correctly — `example.com` must not match
+          `evil.example.com` or `example.com:8080` unless port is explicitly allowed.
+        - Wildcard subdomain patterns (if any) must be anchored to prevent `evilexample.com`
+          matching `*.example.com`.
+        - The function must handle null/undefined/empty redirect gracefully without falling
+          back to an insecure default.
+
+    - path: "api/src/middleware/**"
+      instructions: |
+        - CORS middleware: verify the `origin` callback uses strict equality or an explicit
+          allow-list; regex-based matching can have anchoring bugs.
+        - Proxy/forwarding middleware: any change that reads X-Forwarded-For, X-Forwarded-Host,
+          or X-Forwarded-Proto must check whether TRUST_PROXY is enabled; these headers are
+          attacker-controlled when the server is not behind a trusted proxy.
+        - Authentication middleware: confirm unauthenticated paths are intentional, not a
+          missing route registration.
+        - Rate-limiting middleware: verify limits are applied before expensive operations
+          (DB, crypto).
+        - Sanitize/validate-query middleware: check that new query parameters are sanitized
+          before they reach the database layer.
+
+    - path: "api/src/database/migrations/**"
+      instructions: |
+        Schema migrations are irreversible in production. Apply extra scrutiny:
+        - Every migration must have both `up` and `down` functions; a missing `down` blocks
+          rollback.
+        - Adding a NOT NULL column to an existing table requires a default or a backfill —
+          missing one will break on non-empty databases.
+        - Adding an index on a large table (`items`, `activity`, `revisions`) should use
+          CONCURRENTLY (Postgres) or an equivalent non-locking strategy.
+        - Column renames must update all foreign key references and any raw SQL strings in
+          the codebase.
+        - Check that the migration filename follows the established naming convention
+          (YYYYMMDD[A-Z]) and does not conflict with an existing file.
+        - Verify the migration is idempotent where possible (use hasTable/hasColumn guards).
+
+    - path: "api/src/services/**"
+      instructions: |
+        - Every service method that reads or writes data must enforce permissions via the
+          permissions layer — check that `this.accountability` is passed through, not bypassed.
+        - Avoid N+1 queries: bulk operations should batch DB calls, not loop.
+        - Validate all external input at the service boundary; do not rely solely on downstream
+          DB constraints.
+        - Services that trigger webhooks or flows must not do so inside a DB transaction —
+          side effects after a rollback can leave external systems in an inconsistent state.
+        - New services should follow the established pattern: constructor accepts `knex` and
+          `accountability`, exposes async CRUD methods, throws `ForbiddenError` on access denial.
+
+    - path: "api/src/utils/**"
+      instructions: |
+        - Utility functions dealing with IP addresses or hostnames (get-ip-from-req,
+          get-address) must document their trust model explicitly. If they read forwarded
+          headers, flag for security review — the call site must verify TRUST_PROXY is active.
+        - JWT utilities: verify tokens are verified (not just decoded) before trusting claims,
+          and that the algorithm is explicitly specified (reject `alg: none`).
+        - Any utility that constructs URLs from request properties must be reviewed for open
+          redirect and SSRF risks.
+        - Pure utility functions should have unit tests; flag new utilities lacking coverage.
+
+    - path: "app/src/routes/login/**"
+      instructions: |
+        - Check that SSO redirect targets are validated before navigation — the login flow
+          must not follow an arbitrary `redirect` query parameter to an external domain.
+        - Tokens and auth state must never be written to `localStorage` without encryption;
+          prefer httpOnly cookies for sensitive tokens.
+        - Dynamic content rendered from server responses (provider names, error messages) must
+          be escaped to prevent XSS; `v-html` is forbidden in this directory.
+        - SSO link generation in `sso-links.vue`: verify the `redirect` parameter attached to
+          the SSO URL is URL-encoded and validated against the allow-list before being sent to
+          the OAuth provider.
+
+    - path: "packages/types/**"
+      instructions: |
+        - This package is a public API contract. Flag any breaking change: removing a field,
+          changing a type from optional to required, narrowing a union, or renaming an exported
+          interface.
+        - New required fields on existing interfaces will break all consumers that construct
+          those objects — prefer optional fields or a new interface.
+        - Avoid importing from `api` or `app` packages here; `types` must remain a leaf
+          dependency.
+
+    - path: "packages/storage-driver-*/**"
+      instructions: |
+        - Credentials (access keys, secrets, tokens) must never appear in log output, error
+          messages, or stack traces — check `catch` blocks and error constructors.
+        - File path inputs must be sanitized against path traversal (`../`) before being passed
+          to the storage provider.
+        - Verify that presigned URLs set a short expiry and do not expose credentials in query
+          params beyond what the provider requires.
+        - Each driver must implement the full `StorageDriver` interface; a missing method will
+          throw at runtime in a hard-to-reproduce way.
+
+    - path: "packages/specs/**"
+      instructions: |
+        - OpenAPI spec changes must stay in sync with the actual API implementation — a spec
+          that documents a field the API no longer returns will break SDK generation.
+        - New endpoints must include authentication requirements (`security` key) and
+          appropriate error response schemas (400, 401, 403, 404).
+        - Breaking changes to the spec (removing a path, changing a required parameter) need a
+          major version bump or a deprecation notice.
+
+    - path: "sdk/**"
+      instructions: |
+        - The SDK is a public package with external consumers. Any change to exported function
+          signatures, method names, or TypeScript types is a breaking change — flag it
+          explicitly.
+        - Ensure the SDK builds to both ESM and CJS targets; a change that works in one module
+          system but not the other is a silent regression.
+        - Auth helper changes: verify that token refresh logic handles concurrent requests
+          correctly (no thundering-herd token refresh).
+
+    - path: "tests/tests-blackbox/**"
+      instructions: |
+        - Blackbox tests run against a live Directus instance and are the highest-fidelity
+          signal for regressions. Verify that new auth flows (especially OAuth/SSO) have
+          end-to-end coverage.
+        - Test setup must not hardcode credentials or tokens; use environment variables or
+          test fixtures.
+        - Flaky tests (timeouts, race conditions, order-dependent) should be fixed or skipped
+          with a tracking comment, not left to fail intermittently.
+
+    - path: "{Dockerfile,docker-compose.yml,.github/workflows/**}"
+      instructions: |
+        - Dockerfile: base image must be pinned to a specific digest or minor version, not
+          `latest`. Verify no secrets are baked into layers via ENV or RUN commands.
+        - docker-compose.yml: confirm no production secrets are committed; use `.env`
+          references only.
+        - GitHub Actions workflows: pin third-party actions to a full commit SHA, not a
+          mutable tag. Check for `pull_request_target` triggers combined with untrusted code
+          checkout — this is a known privilege escalation vector.
+        - New workflow steps that use `${{ github.event.* }}` inputs must sanitize values
+          before passing them to shell commands to prevent script injection.
+
+  tools:
+    semgrep:
+      enabled: true
+    opengrep:
+      enabled: true
