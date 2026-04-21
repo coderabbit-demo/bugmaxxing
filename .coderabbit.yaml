@@ -1,0 +1,244 @@
+language: "en-US"
+tone_instructions: >
+  Be extremely thorough and security-focused. You are reviewing authentication code
+  that handles OAuth2/OpenID Connect SSO flows in a production data platform.
+  Treat every change as potentially introducing an authentication bypass, open redirect,
+  or session fixation vulnerability. Flag anything that could cause a regression in
+  existing SSO login flows. Do not hold back — surface every concern no matter how minor.
+  Point out any inconsistency between OAuth2 and OpenID drivers.
+  Flag any change to function signatures that could break existing callers.
+  Flag any moved or renamed files that could break existing imports.
+  Flag any parameter reordering that could cause silent bugs at call sites.
+
+early_access: true
+enable_free_tier: true
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: true
+  high_level_summary: true
+  high_level_summary_instructions: >
+    Summarize all security implications. This PR modifies OAuth2/OpenID callback URL
+    construction and redirect allow-list logic. Specifically analyze: (1) whether the
+    new origin-based security check in isLoginRedirectAllowed could break legitimate
+    redirects when PUBLIC_URL differs from request origin (e.g. behind a reverse proxy),
+    (2) whether using req.hostname vs req.get('host') inconsistently between the redirect
+    check and callback URL generation could cause mismatches (hostname strips port,
+    host includes it), (3) whether removing redirect_uris from the OIDC client constructor
+    weakens token exchange validation, (4) whether the callbackUrl stored in a JWT cookie
+    could be tampered with or replayed, (5) whether the generateCallbackUrl utility
+    trusts user-controlled Host headers without verifying against a trusted origin list,
+    (6) whether the parameter order change in isLoginRedirectAllowed (redirect moved from
+    first to third param) was updated at ALL call sites including SAML.
+  review_status: true
+  review_details: true
+  commit_status: true
+  fail_commit_status: true
+  collapse_walkthrough: false
+  changed_files_summary: true
+  sequence_diagrams: true
+  estimate_code_review_effort: true
+  assess_linked_issues: true
+  related_issues: true
+  related_prs: true
+  suggested_labels: true
+  suggested_reviewers: true
+  poem: false
+  disable_cache: true
+
+  path_filters: []
+
+  path_instructions:
+    - path: "api/src/auth/drivers/oauth2.ts"
+      instructions: >
+        CRITICAL AUTH FILE. Review with maximum scrutiny. Check for:
+
+        1. OPEN REDIRECT via hostname/host mismatch: The new code uses
+           `req.protocol + '://' + req.hostname` for the isLoginRedirectAllowed check
+           but `req.protocol + '://' + req.get('host')` for generateCallbackUrl.
+           `req.hostname` strips the port while `req.get('host')` includes it.
+           This mismatch means the security check validates against a different origin
+           than the one actually used for the callback URL. An attacker on a different
+           port could bypass the redirect allow-list.
+
+        2. HOST HEADER INJECTION: generateCallbackUrl trusts `req.get('host')` directly
+           from the HTTP Host header. Behind a reverse proxy without proper
+           X-Forwarded-Host configuration, an attacker can inject an arbitrary host and
+           redirect the OAuth callback to a malicious server, stealing authorization codes.
+
+        3. REMOVED CLIENT VALIDATION: `redirect_uris` was removed from the OIDC Client
+           constructor. The openid-client library previously validated that the callback
+           URL in token exchange matches registered redirect_uris. Removing this weakens
+           server-side validation during token exchange.
+
+        4. PAYLOAD FIELD NAME MISMATCH: In the login method, `payload['redirectUri']` is
+           used in `this.client.oauthCallback()`, but the JWT cookie stores the field as
+           `callbackUrl`. The callback handler destructures `callbackUrl` from the JWT
+           and passes it as `callbackUrl` in the payload object — but the login method
+           reads `payload['redirectUri']`, NOT `payload['callbackUrl']`. This means the
+           redirect URI passed to oauthCallback() is always `undefined`, which will cause
+           OAuth token exchange failures. This is a critical runtime bug.
+
+        5. REMOVED `redirectUrl` PROPERTY: The class no longer has `this.redirectUrl`.
+           Check if any other code references the `redirectUrl` property on
+           OAuth2AuthDriver instances — this would cause runtime errors.
+
+        6. REMOVED `useEnv()` from constructor: Verify nothing else in the constructor
+           relied on the `env` variable.
+
+        7. OPTIONAL callbackUrl PARAMETER: `generateAuthUrl` accepts optional `callbackUrl`.
+           If undefined, `redirect_uri` in the auth URL is undefined, which may cause
+           OAuth providers to reject the request or use a mismatched default.
+
+    - path: "api/src/auth/drivers/openid.ts"
+      instructions: >
+        CRITICAL AUTH FILE. Review with maximum scrutiny. Check for:
+
+        1. SAME HOST/HOSTNAME MISMATCH: `req.hostname` for redirect validation vs
+           `req.get('host')` for callback URL generation. Systemic vulnerability shared
+           with oauth2.ts.
+
+        2. CALLBACK FIELD NAME CONSISTENCY: The openid driver uses `payload['callbackUrl']`
+           in `client.callback()`. Compare with oauth2.ts which uses `payload['redirectUri']`
+           in `this.client.oauthCallback()`. The JWT stores the field as `callbackUrl` in
+           both drivers, but oauth2.ts reads it as `redirectUri` — meaning oauth2 is broken
+           but openid works. Flag this inconsistency.
+
+        3. REMOVED redirect_uris FROM CLIENT: Same weakened validation as oauth2.ts.
+
+        4. ERROR HANDLING INCONSISTENCY: The fallback redirect on auth URL generation
+           failure uses `env['PUBLIC_URL']`, but the success path uses the request origin.
+           Users behind proxies see inconsistent behavior on errors vs success.
+
+        5. HOST HEADER INJECTION: Same vulnerability as oauth2.ts — generateCallbackUrl
+           trusts the raw Host header.
+
+    - path: "api/src/auth/utils/is-login-redirect-allowed.ts"
+      instructions: >
+        CRITICAL SECURITY FUNCTION — the redirect allow-list gate. Review for:
+
+        1. ALLOW-LIST BYPASS / DEAD CODE: The new check `if (redirectUrl !== originUrl) return false`
+           on line 34 rejects ANY redirect whose protocol+hostname doesn't match the
+           request origin BEFORE the REDIRECT_ALLOW_LIST is consulted on line 38.
+           This makes the allow-list unreachable for cross-origin redirects — it's
+           effectively dead code. Legitimate cross-domain redirects that were previously
+           allowed via the allow-list will now be rejected. This is the core regression
+           that caused the upstream revert.
+
+        2. PORT STRIPPING BUG: `new URL(redirect).hostname` strips the port. A redirect
+           to `https://app.example.com:8443/callback` with origin `https://app.example.com:8443`
+           compares `https://app.example.com` vs `https://app.example.com:8443` and
+           incorrectly rejects it. Breaks non-standard port deployments.
+
+        3. PARAMETER ORDER CHANGE: Signature changed from `(redirect, provider)` to
+           `(provider, originUrl, redirect)`. Breaking change — verify ALL call sites
+           updated correctly, especially saml.ts.
+
+        4. JSDOC MISMATCH: The JSDoc says `@param originUrl` then `@param provider` but
+           the actual signature is `(provider, originUrl, redirect)`. Documentation is
+           wrong.
+
+        5. PROTOCOL VALIDATION GAP: `javascript:alert(1)` passes `URL.canParse()` and
+           `new URL()`. No protocol whitelist (http/https only) exists.
+
+    - path: "api/src/auth/utils/generate-callback-url.ts"
+      instructions: >
+        NEW UTILITY. Review for:
+
+        1. HOST HEADER INJECTION: Takes originUrl from `req.get('host')` with NO
+           validation against PUBLIC_URL or any allow-list. Attacker with `Host: evil.com`
+           gets callback URL `https://evil.com/auth/login/provider/callback`, stealing
+           OAuth authorization codes.
+
+        2. JSDOC PARAMETER ORDER MISMATCH: JSDoc says `@param string Origin URL` first
+           and `@param providerName` second, but the actual signature is
+           `(providerName: string, originUrl: string)`. Documentation is reversed.
+
+        3. NO INPUT VALIDATION: No check that originUrl is a valid URL. Malformed input
+           causes unhandled exception in `new Url(originUrl)`.
+
+    - path: "api/src/auth/drivers/saml.ts"
+      instructions: >
+        Verify the isLoginRedirectAllowed call matches the new signature
+        `(provider, originUrl, redirect)`. The SAML driver does NOT use
+        generateCallbackUrl for dynamic callback URLs like OAuth2 and OpenID now do —
+        flag this as an inconsistency in multi-domain support. SAML users won't get
+        the same multi-domain behavior, which may be an oversight.
+
+    - path: "api/src/auth/drivers/oauth2.test.ts"
+      instructions: >
+        Review test coverage gaps. Check whether tests exist for:
+        - hostname vs host mismatch (port stripping)
+        - Host header injection in callback URL generation
+        - undefined callbackUrl parameter behavior
+        - the redirectUri vs callbackUrl field naming mismatch
+        - non-standard port deployments
+        - mocking req.hostname and req.get('host') with different values
+
+    - path: "api/src/auth/drivers/openid.test.ts"
+      instructions: >
+        Review test coverage gaps:
+        - Same concerns as oauth2.test.ts
+        - Error fallback path using PUBLIC_URL vs origin inconsistency
+        - callbackUrl field in JWT cookie round-trip
+
+    - path: "api/src/auth/utils/is-login-redirect-allowed.test.ts"
+      instructions: >
+        Review whether tests cover:
+        - Cross-origin redirects that ARE in REDIRECT_ALLOW_LIST but get rejected by
+          the new origin check (proving the allow-list is dead code)
+        - Redirects with non-standard ports
+        - javascript: protocol URLs
+        - The new parameter order
+
+    - path: "api/src/auth/utils/generate-callback-url.test.ts"
+      instructions: >
+        Review whether tests cover:
+        - Malicious Host header values
+        - originUrl with ports
+        - JSDoc parameter order correctness
+
+    - path: "api/src/utils/is-login-redirect-allowed.test.ts"
+      instructions: >
+        This file was DELETED. Verify ALL old test cases were migrated to the new
+        location. Check for edge cases lost in the move.
+
+    - path: "**/*.ts"
+      instructions: >
+        Check for stale imports of the OLD path `../../utils/is-login-redirect-allowed.js`
+        that were not updated to `../auth/utils/is-login-redirect-allowed.js`. A stale
+        import causes a runtime crash.
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    ignore_title_keywords: []
+    drafts: true
+    base_branches:
+      - "main"
+
+  tools:
+    eslint:
+      enabled: true
+    semgrep:
+      enabled: true
+    biome:
+      enabled: true
+    shellcheck:
+      enabled: true
+    markdownlint:
+      enabled: true
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false
+  web_search:
+    enabled: true
+  learnings:
+    scope: "auto"
+  issues:
+    scope: "auto"
+  pull_requests:
+    scope: "auto"
