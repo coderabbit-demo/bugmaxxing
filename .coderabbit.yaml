@@ -1,0 +1,157 @@
+language: en-US
+early_access: true
+
+reviews:
+  profile: assertive
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  review_status: true
+  collapse_walkthrough: false
+  changed_files_summary: true
+  sequence_diagrams: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: true
+    base_branches:
+      - main
+
+  path_instructions:
+    - path: "api/src/auth/**"
+      instructions: |
+        You are reviewing security-critical authentication code (OAuth 2.0 / OpenID Connect / SAML).
+        Apply the strictest possible security review. Flag every issue you find, no matter how small.
+
+        CRITICAL — check each of the following and file a separate comment for every violation:
+
+        1. **Open-redirect vulnerabilities**: Verify that ALL redirect URLs are validated against
+           an allow-list before use. Check that `req.hostname` vs `req.get('host')` usage is
+           consistent — mixing them can bypass validation when a port or `X-Forwarded-Host` header
+           is present. Look for any code path where an attacker-controlled URL could end up in a
+           redirect without validation.
+
+        2. **Host header trust / proxy spoofing**: `req.hostname` and `req.get('host')` can be
+           spoofed via `X-Forwarded-Host` if the Express `trust proxy` setting is enabled.
+           Flag any place where the request host is used to construct security-sensitive URLs
+           (callback URLs, redirect allow-list checks) without ensuring the value is trustworthy.
+           If the origin used for allow-list validation differs from the origin used for
+           callback URL generation, that is a **critical security bypass** — call it out explicitly.
+
+        3. **Callback URL consistency**: If the callback URL sent to the OAuth provider during the
+           authorization request differs from the URL used during the token exchange callback,
+           many providers will reject the request or it creates a security hole. Ensure the same
+           callback URL is deterministically used in both legs of the flow.
+
+        4. **SSRF / redirect-to-self attacks**: When redirect validation compares against
+           `originUrl` derived from the request, an attacker who controls the `Host` header
+           can make the check pass for any domain. Ensure validation compares against a trusted
+           server-side value (e.g. `PUBLIC_URL` from env), not a request-derived origin.
+
+        5. **JWT / cookie security**: Cookies carrying auth tokens should be `httpOnly`,
+           `sameSite: 'lax'` or `'strict'`, and ideally `secure: true` in production.
+           JWT payloads should not leak sensitive data.
+
+        6. **Breaking behavioral changes**: If redirect validation logic changed, check whether
+           valid production redirect URLs that previously worked would now be rejected
+           (e.g., redirects to PUBLIC_URL when the request origin differs from PUBLIC_URL).
+
+        7. **Error handling**: Auth code must never swallow errors silently. Every catch block
+           should log or re-throw. Missing error handling in async auth flows leads to
+           unauthenticated sessions or hung requests.
+
+        8. **Removed functionality without replacement**: If a class property, constructor
+           parameter, or config option was removed, verify every consumer still works. Removing
+           `redirect_uris` from the OIDC client constructor may break providers that require it.
+
+        9. **Parameter ordering changes in function signatures**: When the order of parameters
+           changes in a public/shared function, every call site MUST be updated. A single missed
+           call site will silently pass the wrong value. Enumerate all call sites and verify.
+
+        10. **`req.hostname` vs `req.get('host')`**: These return DIFFERENT values. `req.hostname`
+            strips the port. `req.get('host')` includes the port. Using them inconsistently in
+            the same flow (one for validation, another for URL construction) is a security bug.
+            Flag every instance.
+
+    - path: "api/src/auth/utils/**"
+      instructions: |
+        These are security utility functions used across multiple auth drivers.
+        Review with extra scrutiny:
+        - Parameter changes: if parameter order changed, verify ALL callers pass args correctly.
+        - The `isLoginRedirectAllowed` function is the gatekeeper for open-redirect prevention.
+          Any logic flaw here is a critical vulnerability. Check edge cases: empty string, protocol-relative
+          URLs (//evil.com), URLs with authentication segments (https://user@evil.com), IPv6 hosts,
+          URLs with different ports, and URL parser differentials.
+        - The new `originUrl` parameter: verify it is constructed from a trustworthy source in every caller,
+          not from attacker-controlled headers.
+        - The function should fail closed (deny by default), never fail open.
+        - Check for logic errors in the new origin-matching check: does it correctly handle ports,
+          trailing slashes, and case sensitivity?
+
+    - path: "api/src/auth/drivers/oauth2.ts"
+      instructions: |
+        This is the OAuth 2.0 authentication driver — one of the most security-sensitive files.
+        In addition to the general auth instructions, specifically check:
+        - That `redirect_uri` passed during authorization matches what's used during token exchange.
+        - The `oauthCallback` call now uses `payload['redirectUri']` — but the JWT stores `callbackUrl`.
+          Verify the key names match between what's stored and what's retrieved. A mismatch means
+          the callback URL is `undefined` during token exchange, which may cause silent failures
+          or security bypasses.
+        - Removing `redirect_uris` from the Client constructor: check if the OIDC client library
+          requires this for proper redirect_uri validation.
+        - `req.hostname` vs `req.get('host')` inconsistency within this file is a critical finding.
+
+    - path: "api/src/auth/drivers/openid.ts"
+      instructions: |
+        This is the OpenID Connect authentication driver — security-critical.
+        Check the same concerns as oauth2.ts, plus:
+        - OpenID has additional security parameters (nonce, iss). Verify they are still validated.
+        - The `callback` method receives `callbackUrl` from the JWT payload. Verify the property
+          name in the JWT matches the property name used in the callback. Any key mismatch means
+          the URL is undefined.
+        - Look for asymmetry between the OpenID driver and the OAuth2 driver — they should handle
+          callback URLs and redirect validation identically.
+
+    - path: "api/src/auth/drivers/saml.ts"
+      instructions: |
+        SAML auth driver changes. Check that the `isLoginRedirectAllowed` function signature
+        change is correctly applied here — parameter order must match the new signature.
+        SAML uses `req.hostname` — compare with how oauth2/openid drivers build the origin URL
+        and check for inconsistency.
+
+    - path: "**/*.test.ts"
+      instructions: |
+        Review tests for completeness. Flag if critical security scenarios are NOT tested:
+        - Spoofed Host header with X-Forwarded-Host
+        - Redirect to an attacker-controlled domain
+        - Mismatched callback URL between auth request and callback
+        - Port mismatch between req.hostname and req.get('host')
+        - Protocol-relative URL bypass (//evil.com)
+        - Missing or undefined callback URL during token exchange
+
+  tools:
+    biome:
+      enabled: true
+    eslint:
+      enabled: true
+    ast-grep:
+      enabled: true
+      essentials: true
+    semgrep:
+      enabled: true
+    opengrep:
+      enabled: true
+    gitleaks:
+      enabled: true
+    trufflehog:
+      enabled: true
+
+knowledge_base:
+  opt_out: false
+  web_search:
+    enabled: true
+  learnings:
+    scope: local
+  issues:
+    scope: local
+  pull_requests:
+    scope: local
