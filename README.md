@@ -45,21 +45,66 @@ construction, forwarded-host trust, and redirect allow-list handling.
 
 ## Step-by-step
 
-1. **Fork** `coderabbit-demo/bugmaxxing` to one team member's GitHub
-   account.
-2. **Clone your fork** locally and check out the `lab/oauth-multi-domain`
-   branch.
-3. **Create `.coderabbit.yaml`** at the repo root with whatever
-   configuration you think will produce the best CodeRabbit review.
-4. **Commit** (only that file — see Rules below) and **push** to your
-   fork.
-5. **Open a pull request** from your fork's `lab/oauth-multi-domain`
-   branch **back to `coderabbit-demo/bugmaxxing:main`**.
-6. **Wait for CodeRabbit's review** to land on the PR. That triggers
-   scoring.
-7. **Iterate**: push new commits to your fork's branch to trigger
-   re-reviews. The latest review before the 30-minute buzzer is the
-   one scored.
+You'll need [`gh`](https://cli.github.com/) (GitHub CLI) installed and
+authenticated (`gh auth login`). Everything below is copy-pasteable.
+One team member drives the terminal; share the fork with the rest of
+the team via GitHub collaborators if you want to pair.
+
+### 1. Fork and clone
+
+```bash
+gh repo fork coderabbit-demo/bugmaxxing --clone=true --remote=true
+cd bugmaxxing
+git checkout lab/oauth-multi-domain
+```
+
+This creates a fork under your account, clones it, adds `upstream` as
+a remote pointing at `coderabbit-demo/bugmaxxing`, and checks out the
+branch with the buggy PR already applied.
+
+### 2. Create your `.coderabbit.yaml`
+
+```bash
+touch .coderabbit.yaml
+# edit .coderabbit.yaml in your editor of choice
+```
+
+See [docs.coderabbit.ai/reference/yaml-template](https://docs.coderabbit.ai/reference/yaml-template)
+for the full schema.
+
+### 3. Commit and push
+
+```bash
+git add .coderabbit.yaml
+git commit -m "Add team .coderabbit.yaml"
+git push origin lab/oauth-multi-domain
+```
+
+### 4. Open the PR against upstream
+
+```bash
+gh pr create \
+  --repo coderabbit-demo/bugmaxxing \
+  --base main \
+  --head "$(gh api user --jq .login):lab/oauth-multi-domain" \
+  --title "Team <your-team-name> — bugmaxxing submission" \
+  --body  "Team <your-team-name>'s .coderabbit.yaml submission."
+```
+
+The command prints the PR URL. Keep it handy — that's your submission.
+
+### 5. Iterate until the buzzer
+
+Tweak `.coderabbit.yaml`, then:
+
+```bash
+git add .coderabbit.yaml
+git commit -m "Tune config"
+git push
+```
+
+CodeRabbit will re-review on each push. The **latest** review before
+the 30-minute buzzer is the one scored.
 
 ## Scoring
 
