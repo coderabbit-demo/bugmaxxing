@@ -1,0 +1,10 @@
+reviews:
+  profile: "assertive"
+  path_instructions:
+    - path: "**"
+      instructions: >
+        Flag every potential bug, security issue, type error, missing edge case,
+        error handling gap, and performance concern. Leave a separate comment for
+        each distinct issue found. Do not consolidate multiple findings into one
+        comment. For style, naming, and minor improvements, leave nitpick comments.
+        Prefer inline comments anchored to the exact line over summary comments.
