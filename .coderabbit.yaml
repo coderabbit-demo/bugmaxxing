@@ -1,0 +1,280 @@
+language: "en-US"
+tone_instructions: >-
+  You are a production gatekeeper. Block for any security issue, missing tests
+  on changed logic, `any` types without justification, or `console.log` in
+  production code. Never soften blocking issues into suggestions.
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: true
+  high_level_summary: true
+  review_status: true
+  commit_status: true
+  fail_commit_status: true
+  poem: false
+  collapse_walkthrough: false
+  sequence_diagrams: true
+  changed_files_summary: true
+  estimate_code_review_effort: true
+  assess_linked_issues: true
+  related_issues: true
+  related_prs: true
+  review_details: true
+  auto_review:
+    enabled: true
+    drafts: true
+    auto_incremental_review: true
+    base_branches:
+      - main
+      - "release/.*"
+  finishing_touches:
+    docstrings:
+      enabled: true
+      path_instructions: >-
+        Write JSDoc for all exported functions and classes. Include @param,
+        @returns, and @throws. One sentence per description. No implementation
+        details.
+    unit_tests:
+      enabled: true
+      path_instructions: >-
+        Use vitest. Place tests alongside the file as *.test.ts or *.spec.ts.
+        Do not mock the module under test. Cover both happy path and at least
+        one failure/edge-case branch for every changed code path.
+    simplify:
+      enabled: true
+  path_instructions:
+    - path: "**"
+      instructions: |
+        Apply these rules to every file. Block on any violation.
+
+        TypeScript:
+        - BLOCK: `any` type without an inline comment explaining why it cannot be avoided.
+        - BLOCK: non-null assertion (`!`) without a comment proving it is safe.
+        - BLOCK: type cast (`as T`) that is not provably correct from surrounding context.
+        - BLOCK: `@ts-ignore` or `@ts-expect-error` without a comment linking an upstream issue.
+
+        Code hygiene:
+        - BLOCK: `console.log/warn/error/debug` in any non-test file.
+        - BLOCK: `debugger` statement anywhere.
+        - BLOCK: TODO/FIXME/HACK comment without a referenced issue number.
+        - BLOCK: commented-out code.
+
+        Test coverage:
+        - BLOCK: new or modified conditional logic, calculations, or transformations with no
+          corresponding test covering the changed branch.
+        - BLOCK: bug fix without a regression test that would have caught the original bug.
+
+        Structure:
+        - BLOCK: function or method exceeding ~60 lines without clear justification.
+        - BLOCK: nesting deeper than 3 levels where an early-return or extraction is feasible.
+        - BLOCK: magic numbers or strings that are not named constants.
+
+    - path: "api/src/auth/**"
+      instructions: |
+        SECURITY CRITICAL. Block on any of the following — no exceptions.
+
+        Known regression patterns (PR #26074 — later reverted in #26239):
+        - BLOCK: req.get('host') used to construct callback or redirect URLs. This header is
+          user-controlled; use req.hostname instead.
+        - BLOCK: is-login-redirect-allowed called after the origin guard — the allow-list check
+          must precede the hard-origin comparison or cross-domain SSO silently breaks.
+        - BLOCK: redirect_uris removed from OAuth/OIDC client registration — shifts all
+          callback-URL enforcement to runtime and weakens server-side validation.
+        - BLOCK: callbackUrl extracted from a JWT and passed to the OIDC/OAuth library as a
+          trusted redirect_uri without re-validating it against the allow-list.
+        - BLOCK: callers still importing is-login-redirect-allowed from the old
+          api/src/utils/ path after the function moved to api/src/auth/utils/.
+
+        Forwarded header trust:
+        - BLOCK: X-Forwarded-Proto, X-Forwarded-Host, or X-Forwarded-For read without a prior
+          TRUST_PROXY guard. These are attacker-controlled on direct-connect servers and must
+          never influence URL construction without explicit proxy trust.
+
+        OAuth/OpenID correctness:
+        - BLOCK: redirect_uri sent to the provider that does not exactly match what the callback
+          handler will receive — mismatches silently break SSO.
+        - BLOCK: state, nonce, or PKCE parameters not generated, stored, and verified on return.
+        - BLOCK: provider configuration that accepts an empty string or `*` as a valid domain.
+
+        Tests:
+        - BLOCK: new auth code path without a unit test covering the happy path and at least
+          one failure/edge-case path (invalid token, missing param, wrong origin).
+
+    - path: "api/src/auth/utils/is-login-redirect-allowed.ts"
+      instructions: |
+        This function is the sole defense against open redirect. Block on any of:
+        - BLOCK: comparison that is prefix-based, substring-based, or regex-based rather than
+          exact-origin matching.
+        - BLOCK: protocol excluded from comparison — http and https are not interchangeable.
+        - BLOCK: port number omitted from comparison — `example.com` must not match
+          `example.com:8080`.
+        - BLOCK: wildcard subdomain pattern not anchored at the start — `*.example.com` must
+          not match `evilexample.com`.
+        - BLOCK: null, undefined, or empty string input that returns truthy.
+        - BLOCK: any relaxation of existing matching logic without a documented security review.
+        - REQUIRE: unit tests covering exact match, protocol mismatch, port mismatch,
+          evil-prefix subdomain attack, empty/null input, and wildcard anchoring.
+
+    - path: "api/src/middleware/**"
+      instructions: |
+        - BLOCK: CORS origin callback using a regex without `^` and `$` anchors — partial
+          matches allow `evilexample.com` to satisfy `example\.com` patterns.
+        - BLOCK: X-Forwarded-For, X-Forwarded-Host, or X-Forwarded-Proto read without a
+          TRUST_PROXY check — attacker-controlled on direct-connect servers.
+        - BLOCK: route registered without authentication middleware where the endpoint is not
+          explicitly documented as intentionally public.
+        - BLOCK: expensive operation (DB query, crypto, file I/O) placed before the rate-limiter
+          in the middleware chain.
+        - BLOCK: raw query parameter passed to the DB layer without sanitization.
+        - REQUIRE: middleware that mutates request state must have integration tests verifying
+          the transformation and its effect on downstream handlers.
+
+    - path: "api/src/database/migrations/**"
+      instructions: |
+        Migrations are irreversible in production. Block without exception on:
+        - BLOCK: migration missing a `down` function — no rollback means no recovery.
+        - BLOCK: NOT NULL column added to an existing table without a default value or an
+          explicit backfill step — crashes non-empty databases on deploy.
+        - BLOCK: index added on a large table (`items`, `activity`, `revisions`) without using
+          CONCURRENTLY (Postgres) or the equivalent non-locking DDL for other engines.
+        - BLOCK: column rename without corresponding updates to foreign key references and
+          all raw SQL strings across the codebase.
+        - BLOCK: migration filename that does not follow the YYYYMMDD[A-Z] convention.
+        - BLOCK: migration that is not idempotent — must guard with hasTable/hasColumn checks.
+        - BLOCK: DROP COLUMN, TRUNCATE, or DROP TABLE without explicit confirmation in the PR
+          description that data loss is intentional and that a backup strategy exists.
+
+    - path: "api/src/services/**"
+      instructions: |
+        - BLOCK: service method that reads or writes data without passing `this.accountability`
+          through the permissions layer — direct DB access without permission enforcement is an
+          authorization bypass.
+        - BLOCK: loop that issues individual DB queries per iteration — must use batch/bulk
+          queries.
+        - BLOCK: user-supplied input (fields, params) reaching the DB layer without validation
+          at the service boundary.
+        - BLOCK: webhook or flow trigger inside a DB transaction — side effects cannot be rolled
+          back and leave external systems in inconsistent state on failure.
+        - BLOCK: new service that does not follow the established constructor pattern (knex +
+          accountability) or that does not throw ForbiddenError on access denial.
+
+    - path: "api/src/utils/**"
+      instructions: |
+        - BLOCK: IP/hostname utility that reads X-Forwarded-* headers without documenting the
+          trust model and asserting TRUST_PROXY is active at the call site.
+        - BLOCK: JWT utility that decodes without verifying the signature, or that does not
+          explicitly specify the accepted algorithm — `alg: none` must be rejected.
+        - BLOCK: URL constructed from any request-derived property without SSRF and open-redirect
+          analysis documented in the PR.
+        - BLOCK: new utility function with no unit tests.
+
+    - path: "app/src/routes/login/**"
+      instructions: |
+        - BLOCK: navigation following a `redirect` query parameter to an external origin without
+          validating it against the server-side allow-list first.
+        - BLOCK: auth token or session data written to localStorage — must use httpOnly cookies
+          or in-memory state only.
+        - BLOCK: `v-html` with any value derived from server responses or URL parameters.
+        - BLOCK: `redirect` parameter appended to an SSO URL without URL-encoding and allow-list
+          validation — forwards an open redirect through the OAuth provider.
+        - REQUIRE: any new SSO flow must have a test covering redirect validation on both a
+          valid and an invalid/external redirect target.
+
+    - path: "packages/types/**"
+      instructions: |
+        - BLOCK: exported field removed, type narrowed, or optional field made required — these
+          are breaking changes for all consumers across the monorepo.
+        - BLOCK: exported interface or type alias renamed without a deprecation alias preserved.
+        - BLOCK: import from `api`, `app`, or any non-leaf package — types must remain a
+          dependency leaf to prevent circular imports.
+        - REQUIRE: any new interface used in auth or permission flows must be cross-checked
+          against the corresponding database schema columns.
+
+    - path: "packages/storage-driver-*/**"
+      instructions: |
+        - BLOCK: any code path where credentials, access keys, or secrets could appear in logs,
+          error messages, or exception stack traces — check every catch block and Error
+          constructor.
+        - BLOCK: file or object path accepted from user input without sanitizing `../` traversal
+          sequences.
+        - BLOCK: presigned URL without an explicit expiry of 15 minutes or less, unless the PR
+          description provides a justified exception.
+        - BLOCK: driver that does not fully implement every method of the StorageDriver interface
+          — missing methods fail silently at compile time but throw at runtime.
+
+    - path: "packages/specs/**"
+      instructions: |
+        - BLOCK: documented response field, parameter, or status code that does not match the
+          actual API implementation — spec drift breaks SDK generation and client contracts.
+        - BLOCK: new endpoint definition missing a `security` declaration.
+        - BLOCK: new endpoint missing 400, 401, 403, and 404 error response schemas.
+        - BLOCK: breaking change (removed path, changed required parameter, narrowed response
+          type) without a corresponding version bump or explicit deprecation notice.
+
+    - path: "sdk/**"
+      instructions: |
+        - BLOCK: change to an exported function signature, method name, or TypeScript type
+          without a semver major bump or a documented deprecation path.
+        - BLOCK: build change that causes either the ESM or CJS output to fail — both targets
+          must remain valid after every commit.
+        - BLOCK: token refresh logic that does not handle concurrent refresh requests — a
+          thundering herd of concurrent 401s under load is a production outage.
+        - REQUIRE: new public methods must have TypeScript overloads covering all primary usage
+          patterns.
+
+    - path: "tests/tests-blackbox/**"
+      instructions: |
+        - BLOCK: test setup that hardcodes credentials, tokens, or secrets — must use
+          environment variables or committed fixtures with no real values.
+        - BLOCK: test that shares mutable state with another test (order-dependent).
+        - BLOCK: new OAuth/SSO feature with no end-to-end blackbox test covering the full
+          redirect round-trip, including the redirect validation step.
+        - BLOCK: flaky test left enabled without a tracking issue number in a skip comment.
+
+    - path: "{Dockerfile,docker-compose.yml,.github/workflows/**}"
+      instructions: |
+        - BLOCK: Docker base image pinned to a mutable tag (`latest`, `20`, `lts`) — must be
+          a specific patch version or image digest.
+        - BLOCK: secret, API key, or password set via ENV or ARG in any Dockerfile layer.
+        - BLOCK: production secret committed to docker-compose.yml — must be a `.env` variable
+          reference.
+        - BLOCK: GitHub Actions third-party action not pinned to a full commit SHA.
+        - BLOCK: workflow using `pull_request_target` combined with checkout of the PR head ref
+          — canonical untrusted-code execution vector.
+        - BLOCK: `${{ github.event.* }}` or other user-controlled expression interpolated
+          directly into a `run:` shell step without sanitization.
+
+  tools:
+    semgrep:
+      enabled: true
+    opengrep:
+      enabled: true
+    ast-grep:
+      enabled: true
+      essential_rules: true
+    eslint:
+      enabled: true
+    stylelint:
+      enabled: true
+    hadolint:
+      enabled: true
+    actionlint:
+      enabled: true
+    shellcheck:
+      enabled: true
+    github-checks:
+      enabled: true
+      timeout_ms: 90000
+
+knowledge_base:
+  web_search:
+    enabled: true
+  learnings:
+    scope: local
+  issues:
+    scope: local
+  pull_requests:
+    scope: local
+
+chat:
+  auto_reply: true
