@@ -13,7 +13,7 @@ jobs:
     if: github.event.discussion.category.name == 'Feature Requests'
     steps:
       - name: Close discussion and add comment
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const discussionId = context.payload.discussion.node_id;
