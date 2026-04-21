@@ -53,9 +53,9 @@ the team via GitHub collaborators if you want to pair.
 ### 1. Fork and clone
 
 ```bash
-gh repo fork coderabbit-demo/bugmaxxing --clone=true --remote=true
+gh repo fork coderabbit-demo/bugmaxxing --clone=true
 cd bugmaxxing
-git checkout lab/oauth-multi-domain
+git checkout -b lab/oauth-multi-domain --track origin/lab/oauth-multi-domain
 ```
 
 This creates a fork under your account, clones it, adds `upstream` as
