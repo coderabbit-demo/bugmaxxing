@@ -1,0 +1,18 @@
+reviews:
+  profile: assertive
+  path_instructions:
+    - path: "api/src/auth/drivers/**"
+      instructions: |
+        Focus on auth flow security and regressions: Host/X-Forwarded-Host trust, callback or redirect origin confusion, open redirects, SSRF, PKCE/state/nonce bugs, auth bypass, privilege escalation, insecure cookie/JWT/session handling, token leakage in logs/errors, and provider compatibility issues. Prefer concrete inline findings with exploit or regression reasoning.
+    - path: "api/src/auth/utils/**"
+      instructions: |
+        Focus on URL/origin validation correctness: scheme/host/port normalization, allowlist matching, relative URL handling, protocol downgrades, redirect parsing edge cases, and request-controlled input reaching trusted URL construction.
+    - path: "api/utils/**"
+      instructions: |
+        Focus on shared utility regressions that can silently weaken auth or redirect safety, especially unsafe defaults, trust-boundary confusion, and backward-compatibility breaks.
+    - path: "api/src/auth/**/*.test.ts"
+      instructions: |
+        Check negative-path coverage, malformed callback/session data, spoofed host/proxy headers, cross-origin redirect cases, and mock reset/isolation bugs.
+    - path: "app/vite.config.js"
+      instructions: |
+        Focus on proxy-origin, cookie, CORS, websocket, and dev/prod parity risks that can break auth flows or hide callback bugs.
