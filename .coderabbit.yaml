@@ -1,0 +1,93 @@
+language: en-US
+tone_instructions: Be direct and precise. Prioritize security and correctness issues over style.
+
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  high_level_summary: true
+  poem: false
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+
+  instructions: |
+    You are reviewing a security-sensitive OAuth2/OpenID Connect authentication feature.
+    Apply the following checks to every file in this PR:
+
+    1. **req.hostname vs req.get('host') consistency**: Express's `req.hostname` strips the port
+       number, while `req.get('host')` includes it (e.g. `localhost` vs `localhost:8055`).
+       If both are used in the same request handler to construct origin/callback URLs, flag this
+       as a bug — the mismatch will cause redirect validation to fail or produce incorrect
+       callback URLs registered with the OAuth provider.
+
+    2. **Allow-list logic ordering (dead code)**: In redirect-validation functions, check that
+       any early-return guard that compares the redirect origin to the request origin does NOT
+       execute before the allow-list check. If the function returns `false` for origin mismatches
+       before evaluating `REDIRECT_ALLOW_LIST`, the allow-list is unreachable and has no effect.
+       The allow-list exists precisely to permit redirects to *other* trusted origins.
+
+    3. **Host header injection**: Any code that reads `req.get('host')`, `req.headers.host`,
+       or `req.header('host')` to construct URLs (callback URLs, redirect targets, origin strings)
+       is trusting an attacker-controlled HTTP header. Flag this unless the application has
+       explicit reverse-proxy trust configured (e.g. `trust proxy` in Express). Prefer using
+       a configured `PUBLIC_URL` env var or validated server-side origin.
+
+    4. **Open redirect**: Ensure that all redirect targets are validated against a whitelist or
+       known-safe origin before issuing a `res.redirect()`. Trace all code paths that reach
+       `res.redirect(redirect)` and verify the `redirect` value was validated upstream.
+
+    5. **State/nonce parameter mismatch in OAuth callbacks**: Verify that the `state` and
+       `code_verifier` values used in `authorizationUrl()` are the same values verified in the
+       callback handler. If `state` is set to `codeChallenge` but validated against
+       `codeVerifier` (or vice versa), the PKCE/state verification will fail or be skipped.
+
+  path_instructions:
+    - path: "api/src/auth/drivers/oauth2.ts"
+      instructions: |
+        - Check lines that construct the origin string passed to `isLoginRedirectAllowed` vs
+          the origin string passed to `generateCallbackUrl`. They must use the same Express
+          property (`req.hostname` vs `req.get('host')`). A mismatch between these two calls
+          within the same route handler is a bug that breaks redirect validation.
+        - Flag any use of `req.get('host')` for constructing callback URLs as a potential
+          Host header injection vector.
+        - Verify the `callbackUrl` stored in the JWT cookie is identical to the one that will
+          be passed to `client.oauthCallback()` during the callback phase.
+
+    - path: "api/src/auth/drivers/openid.ts"
+      instructions: |
+        - Same checks as oauth2.ts: verify `req.hostname` vs `req.get('host')` consistency
+          between `isLoginRedirectAllowed` and `generateCallbackUrl` calls.
+        - Flag `req.get('host')` usage for URL construction as a Host header injection risk.
+        - Verify the `callbackUrl` in the JWT matches what is passed to `client.callback()`.
+
+    - path: "api/src/auth/utils/is-login-redirect-allowed.ts"
+      instructions: |
+        - Carefully trace the control flow. If there is a condition that returns `false` when
+          the redirect origin doesn't match the request origin, check whether this condition
+          executes BEFORE or AFTER the `REDIRECT_ALLOW_LIST` check.
+        - The allow-list should be checked FIRST (or the origin comparison should be done only
+          after allow-list passes), otherwise the allow-list is dead code that never fires.
+        - Verify that protocol-relative URLs (`//example.com/path`) are handled safely and
+          do not bypass origin checks.
+        - Check that the `originUrl` parameter (derived from the request) is actually used
+          meaningfully and not just passed through without affecting the security decision.
+
+    - path: "api/src/auth/utils/generate-callback-url.ts"
+      instructions: |
+        - The `originUrl` parameter to this function is used verbatim to construct the OAuth
+          callback URL. Verify that the caller validates or sanitizes this value before passing
+          it in. If the caller derives it from an HTTP request header (Host, X-Forwarded-Host,
+          etc.), flag this as a Host header injection vulnerability.
+        - Confirm the generated URL matches the redirect URI registered with the OAuth provider.
+
+    - path: "api/src/auth/**"
+      instructions: |
+        - For any new utility function, verify it has tests covering: (a) standard port, (b)
+          non-standard port, (c) HTTP vs HTTPS, (d) attacker-controlled input.
+
+    - path: "app/vite.config.*"
+      instructions: |
+        - If `changeOrigin` was removed from the dev proxy configuration, flag this — it affects
+          how the `Host` header is forwarded and may interact with the server-side host-based
+          origin detection introduced in this PR.
