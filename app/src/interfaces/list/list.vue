@@ -118,7 +118,7 @@ function saveItem(index: number) {
 
 function trackEdits(updatedValues: any) {
 	const combinedValues = Object.assign({}, defaults.value, updatedValues);
-	Object.assign(edits.value, combinedValues);
+	edits.value = combinedValues;
 }
 
 function checkDiscard() {
